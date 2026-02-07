@@ -1,0 +1,136 @@
+{% if error %}
+<div class="error-box">{{ error }}</div>
+{% elif not payload %}
+<div class="empty-box">No data available for {{ metric }}.</div>
+{% else %}
+<section
+  class="metric-panel-inner"
+  data-metric-panel="1"
+  data-metric="{{ metric }}"
+  data-live-refresh-seconds="{{ live_refresh_seconds }}"
+>
+  <script type="application/json" data-role="payload">{{ payload | tojson }}</script>
+
+  <header class="panel-header">
+    <h2>{{ metric }}</h2>
+    <p>Main chart supports configurable compare offset; each standard preset compares against its own immediately previous window.</p>
+  </header>
+
+  <section class="tag-filter-section">
+    <h3>Tag filters</h3>
+    {% if payload.filters.available %}
+    <div class="tag-filter-grid">
+      {% for label_name, values in payload.filters.available.items() %}
+      <label>
+        {{ label_name }}
+        <select data-tag-filter="{{ label_name }}">
+          <option value="">All</option>
+          {% for value in values %}
+          <option value="{{ value }}" {% if payload.filters.selected.get(label_name) == value %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-box">No tags found for this metric.</div>
+    {% endif %}
+  </section>
+
+  <div class="control-row">
+    <label>
+      Last
+      <input type="number" min="1" value="{{ payload.window.amount }}" data-control="window_amount" />
+    </label>
+
+    <label>
+      Timeframe unit
+      <select data-control="window_unit">
+        {% for unit in window_units %}
+        <option value="{{ unit }}" {% if payload.window.unit == unit %}selected{% endif %}>{{ unit }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <span class="control-text">@</span>
+
+    <label>
+      Every
+      <input type="number" min="1" value="{{ payload.step.amount }}" data-control="step_amount" />
+    </label>
+
+    <label>
+      Per
+      <select data-control="step_unit">
+        {% for unit in step_units %}
+        <option value="{{ unit }}" {% if payload.step.unit == unit %}selected{% endif %}>{{ unit }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="compare-toggle">
+      <input type="checkbox" data-control="compare_enabled" {% if payload.compare.enabled %}checked{% endif %} />
+      Compare to
+    </label>
+
+    <label>
+      Compare offset
+      <select data-control="compare_offset">
+        {% for offset in compare_offsets %}
+        <option value="{{ offset.value }}" {% if payload.compare.offset == offset.value %}selected{% endif %}>{{ offset.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <button type="button" data-action="refresh">Refresh</button>
+    <button type="button" data-action="live">Start Live</button>
+  </div>
+
+  <section class="chart-grid chart-grid-main">
+    <article class="chart-card">
+      <h3>Main chart</h3>
+      <div class="chart-frame main-chart-frame">
+        <canvas id="main-chart"></canvas>
+      </div>
+    </article>
+  </section>
+
+  <section class="summary-section">
+    <h3>Summary</h3>
+    <div class="table-wrap">
+      <table class="summary-table">
+        <thead>
+          <tr>
+            <th>Window</th>
+            <th>Latest</th>
+            <th>Min</th>
+            <th>Max</th>
+            <th>Median</th>
+            <th>Total</th>
+            <th>95% percentile</th>
+            <th>99% percentile</th>
+          </tr>
+        </thead>
+        <tbody data-summary-body></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="preset-section">
+    <h3>Standard timeframes</h3>
+    <div class="chart-grid chart-grid-presets">
+      {% for preset in payload.presets %}
+      <article class="chart-card compact">
+        <h4>{{ preset.label }}</h4>
+        <div class="chart-frame preset-chart-frame">
+          <canvas id="preset-chart-{{ preset.id }}"></canvas>
+        </div>
+        <table class="preset-stats-table">
+          <tbody data-preset-stats="{{ preset.id }}"></tbody>
+        </table>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+</section>
+{% endif %}

@@ -1,0 +1,51 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<main class="page-shell">
+  <header class="hero">
+    <h1>StatView</h1>
+    <p>Explore Prometheus metrics with instant comparisons and live updates.</p>
+  </header>
+
+  <section class="workspace">
+    <aside class="metric-sidebar">
+      <form method="get" action="{{ url_for('index') }}" class="search-form">
+        <input type="text" name="q" value="{{ search }}" placeholder="Filter metrics" />
+        <button type="submit">Filter</button>
+      </form>
+
+      {% if metrics_error %}
+      <div class="error-box">{{ metrics_error }}</div>
+      {% endif %}
+
+      <div class="metric-list" id="metric-list">
+        {% for metric in metrics %}
+        <a
+          class="metric-item {% if metric.name == selected_metric %}active{% endif %}"
+          data-metric-item="1"
+          data-metric-name="{{ metric.name }}"
+          href="{{ url_for('index', metric=metric.name, window_amount=default_window_amount, window_unit=default_window_unit, step_amount=default_step_amount, step_unit=default_step_unit, compare_enabled=default_compare_enabled|int, compare_offset=default_compare_offset, q=search) }}"
+        >
+          <span class="metric-item-name">{{ metric.name }}</span>
+          <span class="metric-item-type">{{ metric.type }}</span>
+        </a>
+        {% endfor %}
+
+        {% if not metrics and not metrics_error %}
+        <div class="empty-box">No metrics found for this filter.</div>
+        {% endif %}
+      </div>
+    </aside>
+
+    <section class="metric-content" id="metric-panel">
+      {% if selected_metric %}
+      {% with metric=selected_metric, payload=initial_payload, error=initial_error %}
+      {% include "metric_panel.html" %}
+      {% endwith %}
+      {% else %}
+      <div class="empty-box">Select a metric from the left panel.</div>
+      {% endif %}
+    </section>
+  </section>
+</main>
+{% endblock %}
