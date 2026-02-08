@@ -1128,7 +1128,7 @@
     }
 
     let draggedTile = null;
-    let placeholder = null;
+    let dragArmedTile = null;
     let initialOrder = [];
 
     const currentOrder = () =>
@@ -1138,15 +1138,16 @@
         )
         .filter((value) => Number.isFinite(value) && value > 0);
 
-    const nearestTile = (clientX, clientY) => {
+    const insertionReference = (clientX, clientY) => {
       const candidates = Array.from(grid.querySelectorAll("[data-dashboard-item-id]")).filter(
         (tile) => tile instanceof HTMLElement && tile !== draggedTile,
       );
       if (!candidates.length) {
         return null;
       }
-      let best = null;
-      let bestScore = Number.POSITIVE_INFINITY;
+
+      let nearest = null;
+      let nearestScore = Number.POSITIVE_INFINITY;
       candidates.forEach((tile) => {
         if (!(tile instanceof HTMLElement)) {
           return;
@@ -1154,13 +1155,24 @@
         const rect = tile.getBoundingClientRect();
         const centerX = rect.left + rect.width / 2;
         const centerY = rect.top + rect.height / 2;
-        const score = Math.hypot(clientX - centerX, clientY - centerY);
-        if (score < bestScore) {
-          best = tile;
-          bestScore = score;
+        const withinX = clientX >= rect.left && clientX <= rect.right;
+        const withinY = clientY >= rect.top && clientY <= rect.bottom;
+        const score = withinX && withinY ? 0 : Math.hypot(clientX - centerX, clientY - centerY);
+        if (score < nearestScore) {
+          nearest = tile;
+          nearestScore = score;
         }
       });
-      return best;
+
+      if (!(nearest instanceof HTMLElement)) {
+        return null;
+      }
+
+      const nearestRect = nearest.getBoundingClientRect();
+      const deltaX = clientX - (nearestRect.left + nearestRect.width / 2);
+      const deltaY = clientY - (nearestRect.top + nearestRect.height / 2);
+      const before = Math.abs(deltaX) > Math.abs(deltaY) ? deltaX < 0 : deltaY < 0;
+      return before ? nearest : nearest.nextElementSibling;
     };
 
     const persistDashboardOrder = async () => {
@@ -1191,25 +1203,42 @@
       }
     };
 
-    grid.addEventListener("dragstart", (event) => {
+    grid.addEventListener("pointerdown", (event) => {
       const target = event.target instanceof Element ? event.target : null;
       const handle = target?.closest("[data-drag-handle]");
       if (!(handle instanceof HTMLElement)) {
-        event.preventDefault();
+        dragArmedTile = null;
         return;
       }
       const tile = handle.closest("[data-dashboard-item-id]");
       if (!(tile instanceof HTMLElement)) {
+        dragArmedTile = null;
+        return;
+      }
+      dragArmedTile = tile;
+    });
+
+    grid.addEventListener("pointerup", () => {
+      if (!(draggedTile instanceof HTMLElement)) {
+        dragArmedTile = null;
+      }
+    });
+    grid.addEventListener("pointercancel", () => {
+      if (!(draggedTile instanceof HTMLElement)) {
+        dragArmedTile = null;
+      }
+    });
+
+    grid.addEventListener("dragstart", (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const tile = target?.closest("[data-dashboard-item-id]");
+      if (!(tile instanceof HTMLElement) || tile !== dragArmedTile) {
         event.preventDefault();
         return;
       }
       draggedTile = tile;
       initialOrder = currentOrder();
       draggedTile.classList.add("dragging");
-      placeholder = document.createElement("article");
-      placeholder.className = "dashboard-drop-placeholder";
-      placeholder.style.height = `${Math.max(tile.getBoundingClientRect().height, 200)}px`;
-      grid.insertBefore(placeholder, tile.nextElementSibling);
       if (event.dataTransfer) {
         event.dataTransfer.effectAllowed = "move";
         event.dataTransfer.setData("text/plain", tile.dataset.dashboardItemId || "");
@@ -1221,44 +1250,29 @@
         return;
       }
       event.preventDefault();
-      const target = nearestTile(event.clientX, event.clientY);
-      if (!(target instanceof HTMLElement)) {
-        if (placeholder instanceof HTMLElement && !placeholder.isConnected) {
-          grid.appendChild(placeholder);
-        }
+      const reference = insertionReference(event.clientX, event.clientY);
+      if (reference === draggedTile) {
         return;
       }
-      const rect = target.getBoundingClientRect();
-      const before = event.clientY < rect.top + rect.height / 2;
-      if (before) {
-        grid.insertBefore(placeholder, target);
-      } else {
-        grid.insertBefore(placeholder, target.nextElementSibling);
-      }
+      grid.insertBefore(draggedTile, reference);
     });
 
-    grid.addEventListener("drop", async (event) => {
+    grid.addEventListener("drop", (event) => {
       if (!(draggedTile instanceof HTMLElement)) {
         return;
       }
       event.preventDefault();
-      if (placeholder instanceof HTMLElement && placeholder.isConnected) {
-        grid.insertBefore(draggedTile, placeholder);
-      }
-      await persistDashboardOrder();
     });
 
     grid.addEventListener("dragend", async () => {
       if (!(draggedTile instanceof HTMLElement)) {
+        dragArmedTile = null;
         return;
       }
-      if (placeholder instanceof HTMLElement && placeholder.isConnected) {
-        placeholder.remove();
-      }
-      await persistDashboardOrder();
       draggedTile.classList.remove("dragging");
+      await persistDashboardOrder();
       draggedTile = null;
-      placeholder = null;
+      dragArmedTile = null;
     });
   }
 

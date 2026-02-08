@@ -10,7 +10,6 @@
       </div>
       <div class="dashboard-header-actions">
         <button type="button" data-action="open-add-saved-modal">Add saved stat</button>
-        <a href="{{ url_for('dashboards_page') }}" class="inline-link">Back to dashboards</a>
       </div>
     </div>
   </section>
@@ -23,10 +22,16 @@
   <section class="dashboard-page" data-dashboard-page="1" data-dashboard-id="{{ dashboard.id }}">
     <div class="dashboard-grid" data-dashboard-grid>
       {% for card in cards %}
-      <article class="dashboard-tile" data-dashboard-tile data-dashboard-item-id="{{ card.dashboard_item_id }}" data-saved-id="{{ card.saved_view_id }}">
+      <article
+        class="dashboard-tile"
+        data-dashboard-tile
+        data-dashboard-item-id="{{ card.dashboard_item_id }}"
+        data-saved-id="{{ card.saved_view_id }}"
+        draggable="true"
+      >
         <div class="dashboard-tile-header">
-          <div class="dashboard-title-group">
-            <a href="{{ card.view_url }}" class="dashboard-tile-title" data-saved-title>{{ card.title }}</a>
+          <a href="{{ card.view_url }}" class="dashboard-tile-title" data-saved-title>{{ card.title }}</a>
+          <div class="dashboard-tile-actions">
             <button
               type="button"
               class="icon-btn"
@@ -38,8 +43,8 @@
                 <path d="M4 20h4l10-10-4-4L4 16v4M12 6l4 4" />
               </svg>
             </button>
+            <button type="button" class="dashboard-drag-handle" data-drag-handle aria-label="Drag to reorder">⋮⋮</button>
           </div>
-          <button type="button" class="dashboard-drag-handle" data-drag-handle draggable="true" aria-label="Drag to reorder">⋮⋮</button>
         </div>
         {% if card.error %}
         <div class="error-box">{{ card.error }}</div>

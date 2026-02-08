@@ -828,18 +828,20 @@ button:hover {
   margin-bottom: 0.5rem;
 }
 
-.dashboard-title-group {
-  display: inline-flex;
-  align-items: flex-start;
-  gap: 0.3rem;
-  min-width: 0;
-}
-
 .dashboard-tile-title {
   color: var(--text);
   text-decoration: none;
   font-weight: 600;
   overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.dashboard-tile-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .dashboard-tile-title:hover {
@@ -855,6 +857,7 @@ button:hover {
   padding: 0;
   cursor: grab;
   color: var(--text-subtle);
+  user-select: none;
 }
 
 .dashboard-drag-handle:active {
