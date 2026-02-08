@@ -1,0 +1,78 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<main class="page-shell">
+  <section class="list-card">
+    <form method="get" action="{{ url_for('saved_page') }}" class="search-form wide">
+      <input type="text" name="q" value="{{ search }}" placeholder="Filter saved views" />
+      <button type="submit">Filter</button>
+    </form>
+
+    {% if not saved_views %}
+    <div class="empty-box" data-saved-empty>No saved views yet.</div>
+    {% else %}
+    <div class="saved-view-list" data-saved-list>
+      {% for item in saved_views %}
+      <article class="saved-view-item" data-saved-item data-saved-id="{{ item.id }}">
+        <div class="saved-view-head">
+          <a class="saved-view-title" data-saved-title href="{{ url_for('index') }}?saved_id={{ item.id }}&{{ item.query_string }}">{{ item.title }}</a>
+          <div class="saved-row-actions">
+            <button
+              type="button"
+              class="icon-btn"
+              data-rename-trigger
+              data-saved-id="{{ item.id }}"
+              aria-label="Rename saved view"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M4 20h4l10-10-4-4L4 16v4M12 6l4 4" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="saved-delete-btn"
+              data-saved-delete
+              data-saved-id="{{ item.id }}"
+              aria-label="Delete saved view"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M3 6h18M8 6V4h8v2M7 6l1 14h8l1-14M10 10v7M14 10v7" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="saved-view-meta">
+          <span>Metrics: {{ item.metrics | join(", ") }}</span>
+          <span>Updated: {{ item.updated_at }}</span>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+
+  <dialog class="modal" data-rename-dialog>
+    <form method="dialog" class="modal-body" autocomplete="off" data-1p-ignore="true">
+      <h3>Rename saved stat</h3>
+      <label>
+        Name
+        <input
+          type="text"
+          data-rename-input
+          maxlength="160"
+          required
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          data-1p-ignore="true"
+          data-lpignore="true"
+        />
+      </label>
+      <div class="modal-actions">
+        <button type="button" data-action="close-rename-modal">Cancel</button>
+        <button type="submit" value="confirm">Save</button>
+      </div>
+    </form>
+  </dialog>
+</main>
+{% endblock %}

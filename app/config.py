@@ -12,12 +12,19 @@ class Settings:
     live_refresh_seconds: int = field(
         default_factory=lambda: int(os.getenv("LIVE_REFRESH_SECONDS", "15"))
     )
+    saved_db_path: str = field(
+        default_factory=lambda: os.getenv(
+            "SAVED_DB_PATH",
+            os.getenv("STAR_DB_PATH", "statview-saved.db"),
+        )
+    )
 
 
 WINDOW_UNITS = ["hour", "day", "week", "month", "year"]
 STEP_UNITS = ["minute", "hour", "day", "week", "year"]
 
 COMPARE_OFFSETS = [
+    {"value": "none", "label": "None"},
     {"value": "1h", "label": "1 hour ago"},
     {"value": "1d", "label": "1 day ago"},
     {"value": "1w", "label": "1 week ago"},
@@ -38,4 +45,4 @@ DEFAULT_WINDOW_UNIT = "week"
 DEFAULT_STEP_AMOUNT = 1
 DEFAULT_STEP_UNIT = "hour"
 DEFAULT_COMPARE_ENABLED = False
-DEFAULT_COMPARE_OFFSET = "1w"
+DEFAULT_COMPARE_OFFSET = "none"

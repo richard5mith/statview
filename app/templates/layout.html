@@ -6,6 +6,7 @@
     <title>StatView</title>
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
     <script>
       (() => {
@@ -25,7 +26,16 @@
         }
       })();
     </script>
-    <button type="button" class="theme-toggle" data-theme-toggle>Light mode</button>
+    <header class="top-nav">
+      <a class="brand" href="{{ url_for('index') }}">StatView</a>
+      <nav class="top-nav-links">
+        <a href="{{ url_for('metrics_page') }}" class="{% if active_nav == 'metrics' %}active{% endif %}">Metrics</a>
+        <a href="{{ url_for('dashboards_page') }}" class="{% if active_nav == 'dashboards' %}active{% endif %}">Dashboards</a>
+        <a href="{{ url_for('saved_page') }}" class="{% if active_nav == 'saved' %}active{% endif %}">Saved</a>
+        <a href="{{ url_for('alerts_page') }}" class="{% if active_nav == 'alerts' %}active{% endif %}">Alerts</a>
+      </nav>
+      <button type="button" class="theme-toggle" data-theme-toggle>Light mode</button>
+    </header>
     {% block content %}{% endblock %}
     <script src="{{ url_for('static', filename='app.js') }}"></script>
   </body>

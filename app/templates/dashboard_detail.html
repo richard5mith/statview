@@ -1,0 +1,112 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<main class="page-shell">
+  <section class="list-card dashboard-header-card">
+    <div class="dashboard-header">
+      <div>
+        <h2>{{ dashboard.name }}</h2>
+        <p>{{ dashboard.item_count }} item{% if dashboard.item_count != 1 %}s{% endif %}</p>
+      </div>
+      <div class="dashboard-header-actions">
+        <button type="button" data-action="open-add-saved-modal">Add saved stat</button>
+        <a href="{{ url_for('dashboards_page') }}" class="inline-link">Back to dashboards</a>
+      </div>
+    </div>
+  </section>
+
+  {% if not cards %}
+  <section class="list-card">
+    <div class="empty-box">No saved views added to this dashboard yet.</div>
+  </section>
+  {% else %}
+  <section class="dashboard-page" data-dashboard-page="1" data-dashboard-id="{{ dashboard.id }}">
+    <div class="dashboard-grid" data-dashboard-grid>
+      {% for card in cards %}
+      <article class="dashboard-tile" data-dashboard-tile data-dashboard-item-id="{{ card.dashboard_item_id }}" data-saved-id="{{ card.saved_view_id }}">
+        <div class="dashboard-tile-header">
+          <div class="dashboard-title-group">
+            <a href="{{ card.view_url }}" class="dashboard-tile-title" data-saved-title>{{ card.title }}</a>
+            <button
+              type="button"
+              class="icon-btn"
+              data-rename-trigger
+              data-saved-id="{{ card.saved_view_id }}"
+              aria-label="Rename saved stat"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M4 20h4l10-10-4-4L4 16v4M12 6l4 4" />
+              </svg>
+            </button>
+          </div>
+          <button type="button" class="dashboard-drag-handle" data-drag-handle draggable="true" aria-label="Drag to reorder">⋮⋮</button>
+        </div>
+        {% if card.error %}
+        <div class="error-box">{{ card.error }}</div>
+        {% elif not card.payload %}
+        <div class="empty-box">No data.</div>
+        {% else %}
+        <script type="application/json" data-role="dashboard-payload">{{ card.payload | tojson }}</script>
+        <div class="chart-frame dashboard-chart-frame">
+          <canvas id="dashboard-chart-{{ card.dashboard_item_id }}"></canvas>
+        </div>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <dialog class="modal" data-add-saved-dialog>
+    <form method="post" action="{{ url_for('add_saved_to_dashboard') }}" class="modal-body">
+      <h3>Add Saved Stat</h3>
+      <input type="hidden" name="dashboard_id" value="{{ dashboard.id }}" />
+      <input type="hidden" name="next" value="{{ current_url }}" />
+      {% if saved_views %}
+      <label>
+        Saved stat
+        <select name="saved_id" required>
+          <option value="" selected disabled>Select saved stat</option>
+          {% for item in saved_views %}
+          <option value="{{ item.id }}">{{ item.title }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="modal-actions">
+        <button type="button" data-action="close-add-saved-modal">Cancel</button>
+        <button type="submit">Add</button>
+      </div>
+      {% else %}
+      <div class="empty-box">No saved stats available yet.</div>
+      <div class="modal-actions">
+        <button type="button" data-action="close-add-saved-modal">Close</button>
+      </div>
+      {% endif %}
+    </form>
+  </dialog>
+
+  <dialog class="modal" data-rename-dialog>
+    <form method="dialog" class="modal-body" autocomplete="off" data-1p-ignore="true">
+      <h3>Rename saved stat</h3>
+      <label>
+        Name
+        <input
+          type="text"
+          data-rename-input
+          maxlength="160"
+          required
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          data-1p-ignore="true"
+          data-lpignore="true"
+        />
+      </label>
+      <div class="modal-actions">
+        <button type="button" data-action="close-rename-modal">Cancel</button>
+        <button type="submit" value="confirm">Save</button>
+      </div>
+    </form>
+  </dialog>
+</main>
+{% endblock %}

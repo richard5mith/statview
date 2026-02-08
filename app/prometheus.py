@@ -32,6 +32,18 @@ def normalize_metric_type(raw_type: str | None) -> str:
     return "unknown"
 
 
+def fallback_metric_type(metric_name: str) -> str:
+    if metric_name.endswith("_total"):
+        return "counter"
+    if metric_name.endswith("_bucket"):
+        return "histogram"
+    if metric_name.endswith("_quantile"):
+        return "summary"
+    if metric_name.endswith("_sum") or metric_name.endswith("_count"):
+        return "counter"
+    return "untyped"
+
+
 def parse_prometheus_duration(duration: str) -> int:
     """Parse Prometheus durations like 5m, 1h30m, 7d into seconds."""
     if not duration:
@@ -129,7 +141,13 @@ class PrometheusClient:
     def list_metric_catalog(self) -> list[dict[str, str]]:
         names = self.list_metric_names()
         types = self.metric_types()
-        return [{"name": name, "type": types.get(name, "unknown")} for name in names]
+        catalog: list[dict[str, str]] = []
+        for name in names:
+            metric_type = types.get(name, "unknown")
+            if metric_type == "unknown":
+                metric_type = fallback_metric_type(name)
+            catalog.append({"name": name, "type": metric_type})
+        return catalog
 
     def metric_label_options(self, metric_name: str) -> dict[str, list[str]]:
         data = self._fetch("/api/v1/series", params={"match[]": metric_name})
@@ -154,6 +172,42 @@ class PrometheusClient:
             for label_name, values in sorted(label_values.items())
             if values
         }
+
+    def list_alerts(self) -> list[dict[str, str]]:
+        data = self._fetch("/api/v1/alerts")
+        if not isinstance(data, dict):
+            return []
+
+        alerts_raw = data.get("alerts", [])
+        if not isinstance(alerts_raw, list):
+            return []
+
+        alerts: list[dict[str, str]] = []
+        for row in alerts_raw:
+            if not isinstance(row, dict):
+                continue
+            labels = row.get("labels", {})
+            annotations = row.get("annotations", {})
+            alert_name = ""
+            if isinstance(labels, dict):
+                alert_name = str(labels.get("alertname", ""))
+            summary = ""
+            if isinstance(annotations, dict):
+                summary = str(
+                    annotations.get("summary")
+                    or annotations.get("description")
+                    or ""
+                )
+            alerts.append(
+                {
+                    "name": alert_name or "unknown",
+                    "state": str(row.get("state", "unknown")),
+                    "active_at": str(row.get("activeAt", "")),
+                    "value": str(row.get("value", "")),
+                    "summary": summary,
+                }
+            )
+        return alerts
 
     def query_range(
         self,

@@ -70,20 +70,14 @@
 
     <label class="compare-toggle">
       <input type="checkbox" data-control="compare_enabled" {% if payload.compare.enabled %}checked{% endif %} />
-      Compare to
+      Compare to previous period
     </label>
 
-    <label>
-      Compare offset
-      <select data-control="compare_offset">
-        {% for offset in compare_offsets %}
-        <option value="{{ offset.value }}" {% if payload.compare.offset == offset.value %}selected{% endif %}>{{ offset.label }}</option>
-        {% endfor %}
-      </select>
-    </label>
-
-    <button type="button" data-action="refresh">Refresh</button>
-    <button type="button" data-action="live">Start Live</button>
+    <div class="control-actions">
+      <button type="button" data-action="reset-zoom" hidden>Reset Zoom</button>
+      <button type="button" data-action="refresh">Refresh</button>
+      <button type="button" data-action="live">Start Live</button>
+    </div>
   </div>
 
   <section class="chart-grid chart-grid-main">
@@ -125,9 +119,11 @@
         <div class="chart-frame preset-chart-frame">
           <canvas id="preset-chart-{{ preset.id }}"></canvas>
         </div>
-        <table class="preset-stats-table">
-          <tbody data-preset-stats="{{ preset.id }}"></tbody>
-        </table>
+        <div class="table-wrap preset-table-wrap">
+          <table class="preset-stats-table">
+            <tbody data-preset-stats="{{ preset.id }}"></tbody>
+          </table>
+        </div>
       </article>
       {% endfor %}
     </div>

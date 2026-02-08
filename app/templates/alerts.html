@@ -1,0 +1,36 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<main class="page-shell">
+  <section class="list-card">
+    {% if alerts_error %}
+    <div class="error-box">{{ alerts_error }}</div>
+    {% elif not alerts %}
+    <div class="empty-box">No active alerts were returned.</div>
+    {% else %}
+    <div class="table-wrap">
+      <table class="metrics-table">
+        <thead>
+          <tr>
+            <th>Alert</th>
+            <th>State</th>
+            <th>Active At</th>
+            <th>Summary</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for alert in alerts %}
+          <tr>
+            <td>{{ alert.name }}</td>
+            <td>{{ alert.state }}</td>
+            <td>{{ alert.active_at }}</td>
+            <td>{{ alert.summary or "-" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

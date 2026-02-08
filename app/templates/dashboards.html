@@ -1,0 +1,29 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<main class="page-shell">
+  <section class="list-card">
+    <form method="post" action="{{ url_for('create_dashboard') }}" class="dashboard-create-form">
+      <input type="text" name="name" placeholder="New dashboard name" aria-label="Dashboard name" required />
+      <button type="submit">Create dashboard</button>
+    </form>
+
+    {% if create_error %}
+    <div class="error-box">{{ create_error }}</div>
+    {% endif %}
+
+    {% if not dashboards %}
+    <div class="empty-box">No dashboards yet.</div>
+    {% else %}
+    <div class="dashboard-list">
+      {% for dashboard in dashboards %}
+      <article class="dashboard-list-item">
+        <a href="{{ url_for('dashboard_detail_page', dashboard_id=dashboard.id) }}">{{ dashboard.name }}</a>
+        <span>{{ dashboard.item_count }} item{% if dashboard.item_count != 1 %}s{% endif %}</span>
+      </article>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

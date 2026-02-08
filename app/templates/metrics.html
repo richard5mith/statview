@@ -1,0 +1,29 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<main class="page-shell">
+  <section class="list-card">
+    <form method="get" action="{{ url_for('metrics_page') }}" class="search-form wide">
+      <input type="text" name="q" value="{{ search }}" placeholder="Filter metrics" />
+      <button type="submit">Filter</button>
+    </form>
+
+    {% if metrics_error %}
+    <div class="error-box">{{ metrics_error }}</div>
+    {% elif not metrics %}
+    <div class="empty-box">No metrics found.</div>
+    {% else %}
+    <div class="metric-catalog-list">
+      {% for metric in metrics %}
+      <article class="metric-catalog-item">
+        <div class="metric-catalog-main">
+          <a class="metric-catalog-name" href="{{ url_for('index', metrics=metric.name) }}">{{ metric.name }}</a>
+          <span class="metric-item-type">{{ metric.type }}</span>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

@@ -2,50 +2,211 @@
 
 {% block content %}
 <main class="page-shell">
-  <header class="hero">
-    <h1>StatView</h1>
-    <p>Explore Prometheus metrics with instant comparisons and live updates.</p>
-  </header>
+  <section class="selector-card">
+    <form method="get" action="{{ url_for('index') }}" class="metric-adder" data-add-metric-form>
+      <input type="hidden" name="saved_id" value="{{ selected_saved_id or '' }}" />
+      <input type="hidden" name="metrics" value="{{ selected_metrics_csv }}" />
+      <input type="hidden" name="window_amount" value="{{ default_window_amount }}" />
+      <input type="hidden" name="window_unit" value="{{ default_window_unit }}" />
+      <input type="hidden" name="step_amount" value="{{ default_step_amount }}" />
+      <input type="hidden" name="step_unit" value="{{ default_step_unit }}" />
+      <input type="hidden" name="compare_enabled" value="{{ '1' if default_compare_enabled else '0' }}" />
+      <input type="hidden" name="label_filters" value="{{ default_label_filters }}" />
+      <input
+        type="text"
+        name="add_metric"
+        list="metric-catalog"
+        placeholder="Find a metric to add"
+        aria-label="Metric name"
+      />
+      <button type="submit">Add</button>
+      <span class="helper-text">Up to 3 metrics</span>
+    </form>
+    <datalist id="metric-catalog">
+      {% for metric in metric_catalog %}
+      <option value="{{ metric.name }}">{{ metric.type }}</option>
+      {% endfor %}
+    </datalist>
 
-  <section class="workspace">
-    <aside class="metric-sidebar">
-      <form method="get" action="{{ url_for('index') }}" class="search-form">
-        <input type="text" name="q" value="{{ search }}" placeholder="Filter metrics" />
-        <button type="submit">Filter</button>
-      </form>
-
-      {% if metrics_error %}
-      <div class="error-box">{{ metrics_error }}</div>
-      {% endif %}
-
-      <div class="metric-list" id="metric-list">
-        {% for metric in metrics %}
-        <a
-          class="metric-item {% if metric.name == selected_metric %}active{% endif %}"
-          data-metric-item="1"
-          data-metric-name="{{ metric.name }}"
-          href="{{ url_for('index', metric=metric.name, window_amount=default_window_amount, window_unit=default_window_unit, step_amount=default_step_amount, step_unit=default_step_unit, compare_enabled=default_compare_enabled|int, compare_offset=default_compare_offset, q=search) }}"
-        >
-          <span class="metric-item-name">{{ metric.name }}</span>
-          <span class="metric-item-type">{{ metric.type }}</span>
-        </a>
-        {% endfor %}
-
-        {% if not metrics and not metrics_error %}
-        <div class="empty-box">No metrics found for this filter.</div>
+    <div class="chip-row">
+      {% for metric in selected_metrics %}
+      <div class="metric-chip chip-color-{{ loop.index0 % 3 }}">
+        <span class="metric-chip-name">{{ metric.name }}</span>
+        <span class="metric-chip-type">{{ metric.type }}</span>
+        {% if remove_urls.get(metric.name) %}
+        <a class="chip-remove" href="{{ remove_urls.get(metric.name) }}" aria-label="Remove metric">×</a>
         {% endif %}
       </div>
-    </aside>
-
-    <section class="metric-content" id="metric-panel">
-      {% if selected_metric %}
-      {% with metric=selected_metric, payload=initial_payload, error=initial_error %}
-      {% include "metric_panel.html" %}
-      {% endwith %}
-      {% else %}
-      <div class="empty-box">Select a metric from the left panel.</div>
-      {% endif %}
-    </section>
+      {% endfor %}
+    </div>
   </section>
+
+  <section class="metric-content">
+    {% if metrics_error %}
+    <div class="error-box">{{ metrics_error }}</div>
+    {% elif view_error %}
+    <div class="error-box">{{ view_error }}</div>
+    {% elif not view_payload %}
+    <div class="empty-box">Add a metric to begin charting.</div>
+    {% else %}
+    <section
+      class="metric-panel-inner"
+      data-view-panel="1"
+      data-metrics="{{ selected_metrics_csv }}"
+      data-saved-id="{{ selected_saved_id or '' }}"
+      data-live-refresh-seconds="{{ live_refresh_seconds }}"
+    >
+      <script type="application/json" data-role="payload">{{ view_payload | tojson }}</script>
+
+      <header class="panel-header">
+        <h2>{{ selected_metrics | map(attribute='name') | join(" • ") }}</h2>
+        <p>The summary and preset tables are shown for the first selected metric.</p>
+      </header>
+
+      <section class="tag-filter-section">
+        <h3>Tag filters</h3>
+        {% if view_payload.filters.available %}
+        <div class="tag-filter-grid">
+          {% for label_name, values in view_payload.filters.available.items() %}
+          <label>
+            {{ label_name }}
+            <select data-tag-filter="{{ label_name }}">
+              <option value="">All</option>
+              {% for value in values %}
+              <option value="{{ value }}" {% if view_payload.filters.selected.get(label_name) == value %}selected{% endif %}>{{ value }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-box">No tags found for {{ view_payload.summary_metric }}.</div>
+        {% endif %}
+      </section>
+
+      <div class="control-row">
+        <label>
+          Last
+          <input type="number" min="1" value="{{ view_payload.window.amount }}" data-control="window_amount" />
+        </label>
+
+        <label>
+          Timeframe unit
+          <select data-control="window_unit">
+            {% for unit in window_units %}
+            <option value="{{ unit }}" {% if view_payload.window.unit == unit %}selected{% endif %}>{{ unit }}</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <span class="control-text">@</span>
+
+        <label>
+          Every
+          <input type="number" min="1" value="{{ view_payload.step.amount }}" data-control="step_amount" />
+        </label>
+
+        <label>
+          Per
+          <select data-control="step_unit">
+            {% for unit in step_units %}
+            <option value="{{ unit }}" {% if view_payload.step.unit == unit %}selected{% endif %}>{{ unit }}</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <label class="compare-toggle">
+          <input type="checkbox" data-control="compare_enabled" {% if view_payload.compare.enabled %}checked{% endif %} />
+          Compare to previous period
+        </label>
+
+        <div class="control-actions">
+          <button type="button" data-action="reset-zoom" hidden>Reset Zoom</button>
+          <button type="button" data-action="save" aria-label="Save current view">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M5 3h12l2 2v16H5zM8 3v6h8V3M8 21v-7h8v7" />
+            </svg>
+            <span data-save-label>{% if selected_saved_id %}Update{% else %}Save{% endif %}</span>
+          </button>
+          <button type="button" data-action="refresh">Refresh</button>
+          <button type="button" data-action="live">Start Live</button>
+        </div>
+      </div>
+
+      <section class="chart-grid chart-grid-main">
+        <article class="chart-card">
+          <h3>Main chart</h3>
+          <div class="chart-frame main-chart-frame">
+            <canvas id="main-chart"></canvas>
+          </div>
+        </article>
+      </section>
+
+      <section class="summary-section">
+        <h3>Summary</h3>
+        <div class="table-wrap">
+          <table class="summary-table">
+            <thead>
+              <tr>
+                <th>Window</th>
+                <th>Latest</th>
+                <th>Min</th>
+                <th>Max</th>
+                <th>Median</th>
+                <th>Total</th>
+                <th>95% percentile</th>
+                <th>99% percentile</th>
+              </tr>
+            </thead>
+            <tbody data-summary-body></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="preset-section">
+        <h3>Standard timeframes</h3>
+        <div class="chart-grid chart-grid-presets">
+          {% for preset in view_payload.presets %}
+          <article class="chart-card compact">
+            <h4>{{ preset.label }}</h4>
+            <div class="chart-frame preset-chart-frame">
+              <canvas id="preset-chart-{{ preset.id }}"></canvas>
+            </div>
+            <div class="table-wrap preset-table-wrap">
+              <table class="preset-stats-table">
+                <tbody data-preset-stats="{{ preset.id }}"></tbody>
+              </table>
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+      </section>
+    </section>
+    {% endif %}
+  </section>
+
+  <dialog class="modal" data-save-name-dialog>
+    <form method="dialog" class="modal-body" autocomplete="off" data-1p-ignore="true">
+      <h3>Name this saved stat</h3>
+      <label>
+        Name
+        <input
+          type="text"
+          data-save-name-input
+          maxlength="160"
+          required
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          data-1p-ignore="true"
+          data-lpignore="true"
+        />
+      </label>
+      <div class="modal-actions">
+        <button type="button" data-action="close-save-name-modal">Cancel</button>
+        <button type="submit" value="confirm">Save</button>
+      </div>
+    </form>
+  </dialog>
 </main>
 {% endblock %}

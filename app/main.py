@@ -3,14 +3,13 @@ from __future__ import annotations
 import atexit
 import json
 import math
+import sqlite3
 from typing import Any
+from urllib.parse import urlencode
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 from app.config import (
-    COMPARE_OFFSETS,
-    DEFAULT_COMPARE_ENABLED,
-    DEFAULT_COMPARE_OFFSET,
     DEFAULT_STEP_AMOUNT,
     DEFAULT_STEP_UNIT,
     DEFAULT_WINDOW_AMOUNT,
@@ -21,6 +20,7 @@ from app.config import (
     Settings,
 )
 from app.prometheus import PrometheusClient, PrometheusError, parse_prometheus_duration
+from app.saved_views import SavedViewStore
 
 _WINDOW_UNIT_TO_DURATION = {
     "hour": lambda n: f"{n}h",
@@ -47,6 +47,16 @@ def _sanitize_positive_int(value: str | None, default: int) -> int:
     except ValueError:
         return default
     return parsed if parsed > 0 else default
+
+
+def _sanitize_optional_positive_int(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _sanitize_choice(value: str | None, allowed: list[str], default: str) -> str:
@@ -79,17 +89,6 @@ def _parse_label_filters(raw: str | None) -> dict[str, str]:
             continue
         cleaned[label_name] = label_value
     return cleaned
-
-
-def _normalize_compare_offset(value: str | None) -> str:
-    fallback = DEFAULT_COMPARE_OFFSET
-    if not value:
-        return fallback
-    try:
-        parse_prometheus_duration(value)
-    except ValueError:
-        return fallback
-    return value
 
 
 def _pluralize(unit: str, amount: int) -> str:
@@ -172,6 +171,79 @@ def _metric_selector(metric_name: str, label_filters: dict[str, str]) -> str:
     return f"{metric_name}{{{','.join(matcher_parts)}}}"
 
 
+def _counter_rate_window(step_duration: str) -> str:
+    try:
+        parse_prometheus_duration(step_duration)
+        return step_duration
+    except ValueError:
+        return "1m"
+
+
+def _metric_type_for_name(metric_name: str, metric_types: dict[str, str]) -> str:
+    metric_type = metric_types.get(metric_name, "unknown")
+    if metric_type != "unknown":
+        return metric_type
+    if metric_name.endswith("_total"):
+        return "counter"
+    if metric_name.endswith("_bucket"):
+        return "histogram"
+    if metric_name.endswith("_quantile"):
+        return "summary"
+    if metric_name.endswith("_sum") or metric_name.endswith("_count"):
+        return "counter"
+    return "untyped"
+
+
+def _build_aggregate_query(
+    metric: str,
+    metric_type: str,
+    selected_filters: dict[str, str],
+    step_duration: str,
+) -> str:
+    metric_query = _metric_selector(metric, selected_filters)
+    rate_window = _counter_rate_window(step_duration)
+
+    if metric_type == "counter":
+        return f"sum(rate({metric_query}[{rate_window}]))"
+
+    if metric_type == "histogram":
+        if metric.endswith("_bucket"):
+            filters_without_le = {
+                label_name: label_value
+                for label_name, label_value in selected_filters.items()
+                if label_name != "le"
+            }
+            bucket_query = _metric_selector(metric, filters_without_le)
+            return (
+                "histogram_quantile(0.95, "
+                f"sum by (le) (rate({bucket_query}[{rate_window}])))"
+            )
+        if metric.endswith("_sum"):
+            count_metric = f"{metric[:-4]}_count"
+            count_query = _metric_selector(count_metric, selected_filters)
+            return (
+                f"sum(rate({metric_query}[{rate_window}])) / "
+                f"clamp_min(sum(rate({count_query}[{rate_window}])), 1e-9)"
+            )
+        if metric.endswith("_count"):
+            return f"sum(rate({metric_query}[{rate_window}]))"
+        return f"sum({metric_query})"
+
+    if metric_type == "summary":
+        if metric.endswith("_sum"):
+            count_metric = f"{metric[:-4]}_count"
+            count_query = _metric_selector(count_metric, selected_filters)
+            return (
+                f"sum(rate({metric_query}[{rate_window}])) / "
+                f"clamp_min(sum(rate({count_query}[{rate_window}])), 1e-9)"
+            )
+        if metric.endswith("_count"):
+            return f"sum(rate({metric_query}[{rate_window}]))"
+        return f"avg({metric_query})"
+
+    return f"sum({metric_query})"
+
+
 def _pct_change(current: float | None, previous: float | None) -> float | None:
     if current is None or previous is None or previous == 0:
         return None
@@ -198,23 +270,132 @@ def _preset_comparison_rows(
     return rows
 
 
-def _build_payload(
+def _metric_types(catalog: list[dict[str, str]]) -> dict[str, str]:
+    return {
+        item.get("name", ""): item.get("type", "unknown")
+        for item in catalog
+        if item.get("name")
+    }
+
+
+def _selected_metrics(raw: str | None, valid_names: set[str], limit: int = 3) -> list[str]:
+    if not raw:
+        return []
+
+    selected: list[str] = []
+    for chunk in raw.split(","):
+        name = chunk.strip()
+        if not name or name not in valid_names or name in selected:
+            continue
+        selected.append(name)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _build_view_query_string(
+    metrics: list[str],
+    window_amount: int,
+    window_unit: str,
+    step_amount: int,
+    step_unit: str,
+    compare_enabled: bool,
+    label_filters: dict[str, str],
+) -> str:
+    params: list[tuple[str, str]] = [
+        ("metrics", ",".join(metrics)),
+        ("window_amount", str(window_amount)),
+        ("window_unit", window_unit),
+        ("step_amount", str(step_amount)),
+        ("step_unit", step_unit),
+        ("compare_enabled", "1" if compare_enabled else "0"),
+    ]
+    if label_filters:
+        params.append(
+            (
+                "label_filters",
+                json.dumps(label_filters, sort_keys=True, separators=(",", ":")),
+            )
+        )
+    return urlencode(params)
+
+
+def _saved_view_title(
+    metrics: list[str],
+    window_amount: int,
+    window_unit: str,
+    step_amount: int,
+    step_unit: str,
+    compare_enabled: bool,
+) -> str:
+    metrics_label = " • ".join(metrics)
+    window_label = f"{window_amount} {_pluralize(window_unit, window_amount)}"
+    step_label = f"{step_amount} {_pluralize(step_unit, step_amount)}"
+    compare_label = "compare previous" if compare_enabled else "no compare"
+    return f"{metrics_label} • {window_label} @ {step_label} • {compare_label}"
+
+
+def _build_view_payload(
     client: PrometheusClient,
-    metric: str,
+    metrics: list[str],
+    metric_types: dict[str, str],
     window_amount: int,
     window_unit: str,
     step_amount: int,
     step_unit: str,
     label_filters: dict[str, str],
     compare_enabled: bool,
-    compare_offset: str,
+) -> dict[str, Any]:
+    metric_payloads = [
+        _build_payload(
+            client,
+            metric=metric_name,
+            metric_type=_metric_type_for_name(metric_name, metric_types),
+            window_amount=window_amount,
+            window_unit=window_unit,
+            step_amount=step_amount,
+            step_unit=step_unit,
+            label_filters=label_filters,
+            compare_enabled=compare_enabled,
+        )
+        for metric_name in metrics
+    ]
+
+    primary_payload = metric_payloads[0]
+    return {
+        "metrics": metrics,
+        "window": primary_payload["window"],
+        "step": primary_payload["step"],
+        "filters": primary_payload["filters"],
+        "compare": primary_payload["compare"],
+        "payloads": metric_payloads,
+        "presets": primary_payload["presets"],
+        "summary_rows": primary_payload["summary_rows"],
+        "summary_metric": primary_payload["metric"],
+    }
+
+
+def _build_payload(
+    client: PrometheusClient,
+    metric: str,
+    metric_type: str,
+    window_amount: int,
+    window_unit: str,
+    step_amount: int,
+    step_unit: str,
+    label_filters: dict[str, str],
+    compare_enabled: bool,
 ) -> dict[str, Any]:
     window_duration = _WINDOW_UNIT_TO_DURATION[window_unit](window_amount)
     step_duration = _STEP_UNIT_TO_DURATION[step_unit](step_amount)
     available_filters = client.metric_label_options(metric)
     selected_filters = _sanitize_label_filters(label_filters, available_filters)
-    metric_query = _metric_selector(metric, selected_filters)
-    aggregate_query = f"sum({metric_query})"
+    aggregate_query = _build_aggregate_query(
+        metric=metric,
+        metric_type=metric_type,
+        selected_filters=selected_filters,
+        step_duration=step_duration,
+    )
 
     primary = client.query_range(
         aggregate_query,
@@ -224,17 +405,18 @@ def _build_payload(
     )
 
     compare_payload = None
-    compare_offset_seconds = parse_prometheus_duration(compare_offset)
-    compare_label = next(
-        (item["label"] for item in COMPARE_OFFSETS if item["value"] == compare_offset),
-        f"{compare_offset} ago",
-    )
+    compare_offset = "none"
+    compare_offset_seconds = 0
+    compare_label = "None"
     if compare_enabled:
+        compare_offset = window_duration
+        compare_offset_seconds = parse_prometheus_duration(window_duration)
+        compare_label = f"previous {window_amount} {_pluralize(window_unit, window_amount)}"
         compare_payload = client.query_range(
             aggregate_query,
             window=window_duration,
             step=step_duration,
-            end_offset=compare_offset,
+            end_offset=window_duration,
             series_name=metric,
         )
 
@@ -299,6 +481,7 @@ def _build_payload(
 
     return {
         "metric": metric,
+        "metric_type": metric_type,
         "window": {
             "amount": window_amount,
             "unit": window_unit,
@@ -337,17 +520,22 @@ def create_app(
 
     resolved_settings = settings or Settings()
     client = prometheus_client or PrometheusClient(resolved_settings.prometheus_url)
+    saved_store = SavedViewStore(resolved_settings.saved_db_path)
 
     app.config["settings"] = resolved_settings
     app.config["prometheus_client"] = client
+    app.config["saved_store"] = saved_store
 
     if prometheus_client is None:
         atexit.register(client.close)
 
     @app.get("/")
+    @app.get("/view")
     def index() -> str:
-        search = request.args.get("q", "").strip()
-        selected_metric = request.args.get("metric", "").strip()
+        selected_metrics_raw = request.args.get("metrics", "").strip()
+        add_metric = request.args.get("add_metric", "").strip()
+        remove_metric = request.args.get("remove_metric", "").strip()
+        selected_saved_id = _sanitize_optional_positive_int(request.args.get("saved_id"))
         window_amount = _sanitize_positive_int(
             request.args.get("window_amount"),
             DEFAULT_WINDOW_AMOUNT,
@@ -366,13 +554,98 @@ def create_app(
             STEP_UNITS,
             DEFAULT_STEP_UNIT,
         )
-        compare_enabled = _parse_bool(
-            request.args.get("compare_enabled"),
-            DEFAULT_COMPARE_ENABLED,
-        )
-        compare_offset = _normalize_compare_offset(request.args.get("compare_offset"))
+        compare_enabled = _parse_bool(request.args.get("compare_enabled"), False)
         label_filters = _parse_label_filters(request.args.get("label_filters"))
 
+        metrics: list[dict[str, str]] = []
+        metrics_error: str | None = None
+        try:
+            metrics = app.config["prometheus_client"].list_metric_catalog()
+        except (PrometheusError, OSError) as exc:
+            metrics_error = str(exc)
+
+        metric_type_map = _metric_types(metrics)
+        metric_names = set(metric_type_map)
+        selected_metrics = _selected_metrics(selected_metrics_raw, metric_names)
+
+        if add_metric and add_metric in metric_names:
+            if add_metric not in selected_metrics and len(selected_metrics) < 3:
+                selected_metrics.append(add_metric)
+        if remove_metric:
+            selected_metrics = [name for name in selected_metrics if name != remove_metric]
+
+        view_payload: dict[str, Any] | None = None
+        view_error: str | None = None
+        if selected_metrics:
+            try:
+                view_payload = _build_view_payload(
+                    app.config["prometheus_client"],
+                    metrics=selected_metrics,
+                    metric_types=metric_type_map,
+                    window_amount=window_amount,
+                    window_unit=window_unit,
+                    step_amount=step_amount,
+                    step_unit=step_unit,
+                    label_filters=label_filters,
+                    compare_enabled=compare_enabled,
+                )
+            except (PrometheusError, ValueError, OSError) as exc:
+                view_error = str(exc)
+
+        selected_metric_cards = [
+            {
+                "name": metric_name,
+                "type": metric_type_map.get(metric_name, "unknown"),
+            }
+            for metric_name in selected_metrics
+        ]
+        remove_urls: dict[str, str] = {}
+        for metric_name in selected_metrics:
+            remaining = [name for name in selected_metrics if name != metric_name]
+            remove_params: dict[str, str | int] = {
+                "metrics": ",".join(remaining),
+                "window_amount": window_amount,
+                "window_unit": window_unit,
+                "step_amount": step_amount,
+                "step_unit": step_unit,
+                "compare_enabled": "1" if compare_enabled else "0",
+                "label_filters": json.dumps(label_filters) if label_filters else "",
+            }
+            if selected_saved_id is not None:
+                remove_params["saved_id"] = selected_saved_id
+            remove_urls[metric_name] = url_for("index", **remove_params)
+
+        default_label_filters = (
+            view_payload.get("filters", {}).get("selected", label_filters)
+            if view_payload
+            else label_filters
+        )
+
+        return render_template(
+            "index.html",
+            metrics_error=metrics_error,
+            metric_catalog=metrics,
+            selected_metrics=selected_metric_cards,
+            selected_metrics_csv=",".join(selected_metrics),
+            selected_saved_id=selected_saved_id,
+            remove_urls=remove_urls,
+            view_payload=view_payload,
+            view_error=view_error,
+            active_nav="view",
+            default_window_amount=window_amount,
+            default_window_unit=window_unit,
+            default_step_amount=step_amount,
+            default_step_unit=step_unit,
+            default_compare_enabled=compare_enabled,
+            default_label_filters=json.dumps(default_label_filters),
+            window_units=WINDOW_UNITS,
+            step_units=STEP_UNITS,
+            live_refresh_seconds=app.config["settings"].live_refresh_seconds,
+        )
+
+    @app.get("/metrics")
+    def metrics_page() -> str:
+        search = request.args.get("q", "").strip()
         metrics: list[dict[str, str]] = []
         metrics_error: str | None = None
         try:
@@ -384,46 +657,423 @@ def create_app(
             lowered = search.lower()
             metrics = [item for item in metrics if lowered in item["name"].lower()]
 
-        if not selected_metric and metrics:
-            selected_metric = metrics[0]["name"]
+        return render_template(
+            "metrics.html",
+            metrics=metrics,
+            metrics_error=metrics_error,
+            search=search,
+            active_nav="metrics",
+        )
 
-        initial_payload: dict[str, Any] | None = None
-        initial_error: str | None = None
-        if selected_metric:
+    @app.get("/saved")
+    def saved_page() -> str:
+        search = request.args.get("q", "").strip()
+        saved_views = app.config["saved_store"].list(search)
+
+        return render_template(
+            "saved.html",
+            saved_views=saved_views,
+            search=search,
+            active_nav="saved",
+        )
+
+    @app.get("/dashboards")
+    def dashboards_page() -> str:
+        dashboards = app.config["saved_store"].list_dashboards()
+        return render_template(
+            "dashboards.html",
+            dashboards=dashboards,
+            active_nav="dashboards",
+        )
+
+    @app.post("/dashboards")
+    def create_dashboard() -> Any:
+        dashboard_name = request.form.get("name", "").strip()
+        if not dashboard_name:
+            dashboards = app.config["saved_store"].list_dashboards()
+            return (
+                render_template(
+                    "dashboards.html",
+                    dashboards=dashboards,
+                    create_error="Dashboard name is required.",
+                    active_nav="dashboards",
+                ),
+                400,
+            )
+
+        try:
+            dashboard = app.config["saved_store"].create_dashboard(dashboard_name)
+        except ValueError:
+            dashboards = app.config["saved_store"].list_dashboards()
+            return (
+                render_template(
+                    "dashboards.html",
+                    dashboards=dashboards,
+                    create_error="Dashboard name is required.",
+                    active_nav="dashboards",
+                ),
+                400,
+            )
+        except sqlite3.IntegrityError:
+            dashboards = app.config["saved_store"].list_dashboards()
+            return (
+                render_template(
+                    "dashboards.html",
+                    dashboards=dashboards,
+                    create_error="Dashboard name already exists.",
+                    active_nav="dashboards",
+                ),
+                409,
+            )
+
+        return redirect(url_for("dashboard_detail_page", dashboard_id=dashboard["id"]), code=303)
+
+    @app.post("/dashboards/add-item")
+    def add_saved_to_dashboard() -> Any:
+        dashboard_id = _sanitize_optional_positive_int(request.form.get("dashboard_id"))
+        saved_id = _sanitize_optional_positive_int(request.form.get("saved_id"))
+        next_url = request.form.get("next", "").strip() or url_for("saved_page")
+        if dashboard_id is None or saved_id is None:
+            return redirect(next_url, code=303)
+        app.config["saved_store"].add_saved_view_to_dashboard(dashboard_id, saved_id)
+        return redirect(next_url, code=303)
+
+    @app.get("/dashboards/<int:dashboard_id>")
+    def dashboard_detail_page(dashboard_id: int) -> Any:
+        dashboard = app.config["saved_store"].get_dashboard(dashboard_id)
+        if dashboard is None:
+            return redirect(url_for("dashboards_page"), code=303)
+        saved_views = app.config["saved_store"].list()
+
+        metrics: list[dict[str, str]] = []
+        try:
+            metrics = app.config["prometheus_client"].list_metric_catalog()
+        except (PrometheusError, OSError):
+            metrics = []
+        metric_type_map = _metric_types(metrics)
+        metric_names = set(metric_type_map)
+
+        cards: list[dict[str, Any]] = []
+        for item in app.config["saved_store"].list_dashboard_items(dashboard_id):
+            selected_metrics = _selected_metrics(",".join(item["metrics"]), metric_names)
+            if not selected_metrics:
+                cards.append(
+                    {
+                        "dashboard_item_id": item["dashboard_item_id"],
+                        "saved_view_id": item["saved_view_id"],
+                        "title": item["title"],
+                        "view_url": (
+                            f"{url_for('index')}"
+                            f"?saved_id={item['saved_view_id']}&{item['query_string']}"
+                        ),
+                        "payload": None,
+                        "error": "One or more metrics no longer exist in Prometheus.",
+                    }
+                )
+                continue
+
             try:
-                initial_payload = _build_payload(
+                payload = _build_view_payload(
                     app.config["prometheus_client"],
-                    metric=selected_metric,
+                    metrics=selected_metrics,
+                    metric_types=metric_type_map,
+                    window_amount=int(item["window_amount"]),
+                    window_unit=str(item["window_unit"]),
+                    step_amount=int(item["step_amount"]),
+                    step_unit=str(item["step_unit"]),
+                    label_filters=dict(item["label_filters"]),
+                    compare_enabled=bool(item["compare_enabled"]),
+                )
+                error: str | None = None
+            except (PrometheusError, ValueError, OSError) as exc:
+                payload = None
+                error = str(exc)
+
+            cards.append(
+                {
+                    "dashboard_item_id": item["dashboard_item_id"],
+                    "saved_view_id": item["saved_view_id"],
+                    "title": item["title"],
+                    "view_url": (
+                        f"{url_for('index')}?saved_id={item['saved_view_id']}&{item['query_string']}"
+                    ),
+                    "payload": payload,
+                    "error": error,
+                }
+            )
+
+        return render_template(
+            "dashboard_detail.html",
+            dashboard=dashboard,
+            cards=cards,
+            saved_views=saved_views,
+            current_url=request.path,
+            active_nav="dashboards",
+        )
+
+    @app.get("/starred")
+    def starred_page_redirect() -> Any:
+        return redirect(url_for("saved_page"), code=308)
+
+    @app.post("/api/saved")
+    def save_view_api() -> tuple[dict[str, Any], int] | Any:
+        payload = request.get_json(silent=True)
+        payload_dict: dict[str, Any] = {}
+        if isinstance(payload, dict):
+            payload_dict = payload
+
+        metrics_raw = str(payload_dict.get("metrics", "")).strip()
+        if not metrics_raw:
+            metrics_raw = request.form.get("metrics", "").strip()
+
+        metric_catalog: list[dict[str, str]] = []
+        try:
+            metric_catalog = app.config["prometheus_client"].list_metric_catalog()
+        except (PrometheusError, OSError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        metric_names = {item["name"] for item in metric_catalog}
+        selected_metrics = _selected_metrics(metrics_raw, metric_names)
+        if not selected_metrics:
+            return jsonify({"error": "at least one valid metric is required"}), 400
+
+        window_amount = _sanitize_positive_int(
+            str(payload_dict.get("window_amount", "")).strip()
+            or request.form.get("window_amount"),
+            DEFAULT_WINDOW_AMOUNT,
+        )
+        window_unit = _sanitize_choice(
+            str(payload_dict.get("window_unit", "")).strip() or request.form.get("window_unit"),
+            WINDOW_UNITS,
+            DEFAULT_WINDOW_UNIT,
+        )
+        step_amount = _sanitize_positive_int(
+            str(payload_dict.get("step_amount", "")).strip() or request.form.get("step_amount"),
+            DEFAULT_STEP_AMOUNT,
+        )
+        step_unit = _sanitize_choice(
+            str(payload_dict.get("step_unit", "")).strip() or request.form.get("step_unit"),
+            STEP_UNITS,
+            DEFAULT_STEP_UNIT,
+        )
+
+        compare_raw = payload_dict.get("compare_enabled")
+        if compare_raw is None:
+            compare_raw = request.form.get("compare_enabled")
+        compare_enabled = _parse_bool(str(compare_raw) if compare_raw is not None else None, False)
+        saved_view_id = _sanitize_optional_positive_int(
+            str(payload_dict.get("saved_id", "")).strip() or request.form.get("saved_id")
+        )
+        title_raw = str(payload_dict.get("title", "")).strip() or request.form.get(
+            "title",
+            "",
+        ).strip()
+
+        label_filters_raw = payload_dict.get("label_filters")
+        label_filters = (
+            _parse_label_filters(json.dumps(label_filters_raw))
+            if isinstance(label_filters_raw, dict)
+            else _parse_label_filters(str(label_filters_raw) if label_filters_raw else None)
+        )
+        if not label_filters:
+            label_filters = _parse_label_filters(request.form.get("label_filters"))
+
+        try:
+            available_filters = app.config["prometheus_client"].metric_label_options(
+                selected_metrics[0]
+            )
+            label_filters = _sanitize_label_filters(label_filters, available_filters)
+        except (PrometheusError, OSError):
+            label_filters = {}
+
+        query_string = _build_view_query_string(
+            metrics=selected_metrics,
+            window_amount=window_amount,
+            window_unit=window_unit,
+            step_amount=step_amount,
+            step_unit=step_unit,
+            compare_enabled=compare_enabled,
+            label_filters=label_filters,
+        )
+        if title_raw:
+            title = title_raw
+        elif saved_view_id is not None:
+            existing_saved = app.config["saved_store"].get(saved_view_id)
+            if existing_saved:
+                title = str(existing_saved.get("title", "")).strip() or _saved_view_title(
+                    metrics=selected_metrics,
                     window_amount=window_amount,
                     window_unit=window_unit,
                     step_amount=step_amount,
                     step_unit=step_unit,
-                    label_filters=label_filters,
                     compare_enabled=compare_enabled,
-                    compare_offset=compare_offset,
                 )
-            except (PrometheusError, ValueError, OSError) as exc:
-                initial_error = str(exc)
+            else:
+                title = _saved_view_title(
+                    metrics=selected_metrics,
+                    window_amount=window_amount,
+                    window_unit=window_unit,
+                    step_amount=step_amount,
+                    step_unit=step_unit,
+                    compare_enabled=compare_enabled,
+                )
+        else:
+            title = _saved_view_title(
+                metrics=selected_metrics,
+                window_amount=window_amount,
+                window_unit=window_unit,
+                step_amount=step_amount,
+                step_unit=step_unit,
+                compare_enabled=compare_enabled,
+            )
+
+        saved_entry, created = app.config["saved_store"].save(
+            saved_view_id=saved_view_id,
+            title=title,
+            metrics_csv=",".join(selected_metrics),
+            window_amount=window_amount,
+            window_unit=window_unit,
+            step_amount=step_amount,
+            step_unit=step_unit,
+            compare_enabled=compare_enabled,
+            label_filters=label_filters,
+            query_string=query_string,
+        )
+
+        return (
+            jsonify(
+                {
+                    "id": saved_entry["id"],
+                    "title": saved_entry["title"],
+                    "created": created,
+                    "url": (
+                        f"{url_for('index')}"
+                        f"?saved_id={saved_entry['id']}&{saved_entry['query_string']}"
+                    ),
+                    "updated_at": saved_entry["updated_at"],
+                }
+            ),
+            201 if created else 200,
+        )
+
+    @app.delete("/api/saved/<int:saved_id>")
+    def delete_saved_view_api(saved_id: int) -> tuple[dict[str, Any], int] | Any:
+        deleted = app.config["saved_store"].remove(saved_id)
+        if not deleted:
+            return jsonify({"error": "saved view not found"}), 404
+        return jsonify({"deleted": True, "id": saved_id})
+
+    @app.post("/api/saved/<int:saved_id>/rename")
+    def rename_saved_view_api(saved_id: int) -> tuple[dict[str, Any], int] | Any:
+        payload = request.get_json(silent=True)
+        title = ""
+        if isinstance(payload, dict):
+            title = str(payload.get("title", "")).strip()
+        if not title:
+            title = request.form.get("title", "").strip()
+        if not title:
+            return jsonify({"error": "title is required"}), 400
+
+        entry = app.config["saved_store"].rename(saved_id, title)
+        if entry is None:
+            return jsonify({"error": "saved view not found"}), 404
+        return jsonify({"id": entry["id"], "title": entry["title"]})
+
+    @app.post("/api/dashboards/<int:dashboard_id>/reorder")
+    def reorder_dashboard_items_api(dashboard_id: int) -> tuple[dict[str, Any], int] | Any:
+        payload = request.get_json(silent=True)
+        item_ids_raw: list[Any] = []
+        if isinstance(payload, dict) and isinstance(payload.get("item_ids"), list):
+            item_ids_raw = payload.get("item_ids", [])
+
+        item_ids: list[int] = []
+        for raw in item_ids_raw:
+            try:
+                parsed = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                item_ids.append(parsed)
+
+        if not item_ids:
+            return jsonify({"error": "item_ids is required"}), 400
+
+        ok = app.config["saved_store"].reorder_dashboard_items(dashboard_id, item_ids)
+        if not ok:
+            return jsonify({"error": "invalid dashboard item order"}), 400
+        return jsonify({"ok": True, "dashboard_id": dashboard_id, "item_ids": item_ids})
+
+    @app.get("/alerts")
+    def alerts_page() -> str:
+        alerts: list[dict[str, str]] = []
+        alerts_error: str | None = None
+        client_ref = app.config["prometheus_client"]
+        try:
+            if hasattr(client_ref, "list_alerts"):
+                alerts = client_ref.list_alerts()
+        except (PrometheusError, OSError) as exc:
+            alerts_error = str(exc)
 
         return render_template(
-            "index.html",
-            metrics=metrics,
-            metrics_error=metrics_error,
-            selected_metric=selected_metric,
-            initial_payload=initial_payload,
-            initial_error=initial_error,
-            search=search,
-            default_window_amount=window_amount,
-            default_window_unit=window_unit,
-            default_step_amount=step_amount,
-            default_step_unit=step_unit,
-            default_compare_enabled=compare_enabled,
-            default_compare_offset=compare_offset,
-            window_units=WINDOW_UNITS,
-            step_units=STEP_UNITS,
-            compare_offsets=COMPARE_OFFSETS,
-            live_refresh_seconds=app.config["settings"].live_refresh_seconds,
+            "alerts.html",
+            alerts=alerts,
+            alerts_error=alerts_error,
+            active_nav="alerts",
         )
+
+    @app.get("/api/view-data")
+    def view_data() -> tuple[dict[str, Any], int] | Any:
+        metrics_raw = request.args.get("metrics", "").strip()
+
+        metric_catalog: list[dict[str, str]] = []
+        try:
+            metric_catalog = app.config["prometheus_client"].list_metric_catalog()
+        except (PrometheusError, OSError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        metric_names = {item["name"] for item in metric_catalog}
+        selected_metrics = _selected_metrics(metrics_raw, metric_names)
+        if not selected_metrics:
+            return jsonify({"error": "at least one metric is required"}), 400
+
+        window_amount = _sanitize_positive_int(
+            request.args.get("window_amount"),
+            DEFAULT_WINDOW_AMOUNT,
+        )
+        window_unit = _sanitize_choice(
+            request.args.get("window_unit"),
+            WINDOW_UNITS,
+            DEFAULT_WINDOW_UNIT,
+        )
+        step_amount = _sanitize_positive_int(
+            request.args.get("step_amount"),
+            DEFAULT_STEP_AMOUNT,
+        )
+        step_unit = _sanitize_choice(
+            request.args.get("step_unit"),
+            STEP_UNITS,
+            DEFAULT_STEP_UNIT,
+        )
+        compare_enabled = _parse_bool(request.args.get("compare_enabled"), False)
+        label_filters = _parse_label_filters(request.args.get("label_filters"))
+
+        try:
+            metric_type_map = _metric_types(metric_catalog)
+            payload = _build_view_payload(
+                app.config["prometheus_client"],
+                metrics=selected_metrics,
+                metric_types=metric_type_map,
+                window_amount=window_amount,
+                window_unit=window_unit,
+                step_amount=step_amount,
+                step_unit=step_unit,
+                label_filters=label_filters,
+                compare_enabled=compare_enabled,
+            )
+        except (PrometheusError, ValueError, OSError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        return jsonify(payload)
 
     @app.get("/metric-panel")
     def metric_panel() -> str:
@@ -453,24 +1103,21 @@ def create_app(
             STEP_UNITS,
             DEFAULT_STEP_UNIT,
         )
-        compare_enabled = _parse_bool(
-            request.args.get("compare_enabled"),
-            DEFAULT_COMPARE_ENABLED,
-        )
-        compare_offset = _normalize_compare_offset(request.args.get("compare_offset"))
+        compare_enabled = _parse_bool(request.args.get("compare_enabled"), False)
         label_filters = _parse_label_filters(request.args.get("label_filters"))
 
         try:
+            metric_type = _metric_type_for_name(metric, {})
             payload = _build_payload(
                 app.config["prometheus_client"],
                 metric=metric,
+                metric_type=metric_type,
                 window_amount=window_amount,
                 window_unit=window_unit,
                 step_amount=step_amount,
                 step_unit=step_unit,
                 label_filters=label_filters,
                 compare_enabled=compare_enabled,
-                compare_offset=compare_offset,
             )
             error: str | None = None
         except (PrometheusError, ValueError, OSError) as exc:
@@ -484,7 +1131,6 @@ def create_app(
             error=error,
             window_units=WINDOW_UNITS,
             step_units=STEP_UNITS,
-            compare_offsets=COMPARE_OFFSETS,
             live_refresh_seconds=app.config["settings"].live_refresh_seconds,
         )
 
@@ -512,24 +1158,21 @@ def create_app(
             STEP_UNITS,
             DEFAULT_STEP_UNIT,
         )
-        compare_enabled = _parse_bool(
-            request.args.get("compare_enabled"),
-            DEFAULT_COMPARE_ENABLED,
-        )
-        compare_offset = _normalize_compare_offset(request.args.get("compare_offset"))
+        compare_enabled = _parse_bool(request.args.get("compare_enabled"), False)
         label_filters = _parse_label_filters(request.args.get("label_filters"))
 
         try:
+            metric_type = _metric_type_for_name(metric, {})
             payload = _build_payload(
                 app.config["prometheus_client"],
                 metric=metric,
+                metric_type=metric_type,
                 window_amount=window_amount,
                 window_unit=window_unit,
                 step_amount=step_amount,
                 step_unit=step_unit,
                 label_filters=label_filters,
                 compare_enabled=compare_enabled,
-                compare_offset=compare_offset,
             )
         except (PrometheusError, ValueError, OSError) as exc:
             return jsonify({"error": str(exc)}), 400
