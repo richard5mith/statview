@@ -181,6 +181,41 @@ def test_save_view_api_updates_existing_row_when_saved_id_provided() -> None:
     assert "step_amount=2" in updated_body["url"]
 
 
+def test_save_view_api_can_force_create_new_entry() -> None:
+    app = _test_app()
+    client = app.test_client()
+
+    payload = {
+        "metrics": "up",
+        "window_amount": "1",
+        "window_unit": "week",
+        "step_amount": "1",
+        "step_unit": "hour",
+        "compare_enabled": "0",
+        "title": "Original Save",
+    }
+    first = client.post("/api/saved", json=payload)
+    assert first.status_code == 201
+    first_body = first.get_json()
+
+    second = client.post(
+        "/api/saved",
+        json={
+            **payload,
+            "title": "Copy Save",
+            "save_as_new": "1",
+        },
+    )
+    assert second.status_code == 201
+    second_body = second.get_json()
+    assert second_body["created"] is True
+    assert second_body["id"] != first_body["id"]
+    assert "saved_id=" in second_body["url"]
+
+    saved_entries = app.config["saved_store"].list()
+    assert len(saved_entries) == 2
+
+
 def test_save_view_api_accepts_custom_title() -> None:
     app = _test_app()
     client = app.test_client()
@@ -492,6 +527,9 @@ def test_view_data_api_returns_json() -> None:
     body = response.get_json()
     assert body["metrics"] == ["up", "node_cpu_seconds_total"]
     assert len(body["payloads"]) == 2
+    assert len(body["metric_summaries"]) == 2
+    assert body["metric_summaries"][0]["metric"] == "up"
+    assert body["metric_summaries"][1]["metric"] == "node_cpu_seconds_total"
     assert body["summary_metric"] == "up"
     assert body["filters"]["selected"] == {"job": "api"}
     payloads = {item["metric"]: item for item in body["payloads"]}
@@ -508,7 +546,34 @@ def test_index_view_renders_tag_filters_for_selected_metric() -> None:
 
     assert response.status_code == 200
     assert b"Tag filters" in response.data
-    assert b"data-tag-filter=\"job\"" in response.data
+    assert b"data-tag-filter-label=\"job\"" in response.data
+    assert b"data-tag-filter-metric=\"up\"" in response.data
+
+
+def test_view_data_api_supports_per_metric_label_filters() -> None:
+    app = _test_app()
+    response = app.test_client().get(
+        "/api/view-data",
+        query_string={
+            "metrics": "up,node_cpu_seconds_total",
+            "window_amount": "1",
+            "window_unit": "week",
+            "step_amount": "1",
+            "step_unit": "hour",
+            "label_filters": json.dumps(
+                {
+                    "up": {"job": "api"},
+                    "node_cpu_seconds_total": {"instance": "a"},
+                }
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.get_json()
+    payloads = {item["metric"]: item for item in body["payloads"]}
+    assert payloads["up"]["filters"]["selected"] == {"job": "api"}
+    assert payloads["node_cpu_seconds_total"]["filters"]["selected"] == {}
 
 
 def test_view_data_histogram_metric_uses_histogram_quantile() -> None:

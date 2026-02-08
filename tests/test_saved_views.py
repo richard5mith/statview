@@ -93,3 +93,69 @@ def test_saved_view_store_edge_cases(tmp_path) -> None:
     assert store.add_saved_view_to_dashboard(999999, 1) is False
 
     assert store.reorder_dashboard_items(dashboard["id"], []) is False
+
+
+def test_saved_view_store_force_create_allows_duplicate_query_strings(tmp_path) -> None:
+    db_path = tmp_path / "saved.sqlite3"
+    store = SavedViewStore(str(db_path))
+
+    first, created_first = store.save(
+        title="first",
+        metrics_csv="up",
+        window_amount=1,
+        window_unit="week",
+        step_amount=1,
+        step_unit="hour",
+        compare_enabled=False,
+        label_filters={},
+        query_string="metrics=up&window_amount=1&window_unit=week&step_amount=1&step_unit=hour",
+    )
+    assert created_first is True
+
+    second, created_second = store.save(
+        title="second",
+        metrics_csv="up",
+        window_amount=1,
+        window_unit="week",
+        step_amount=1,
+        step_unit="hour",
+        compare_enabled=False,
+        label_filters={},
+        query_string="metrics=up&window_amount=1&window_unit=week&step_amount=1&step_unit=hour",
+        force_create=True,
+    )
+    assert created_second is True
+    assert second["id"] != first["id"]
+    assert len(store.list()) == 2
+
+
+def test_saved_view_store_persists_per_metric_label_filters(tmp_path) -> None:
+    db_path = tmp_path / "saved.sqlite3"
+    store = SavedViewStore(str(db_path))
+
+    saved, created = store.save(
+        title="multi",
+        metrics_csv="up,node_cpu_seconds_total",
+        window_amount=1,
+        window_unit="week",
+        step_amount=1,
+        step_unit="hour",
+        compare_enabled=False,
+        label_filters={
+            "up": {"job": "api"},
+            "node_cpu_seconds_total": {"instance": "a"},
+        },
+        query_string=(
+            "metrics=up%2Cnode_cpu_seconds_total&window_amount=1&window_unit=week"
+            "&step_amount=1&step_unit=hour&compare_enabled=0"
+        ),
+    )
+    assert created is True
+    assert saved["label_filters"] == {
+        "up": {"job": "api"},
+        "node_cpu_seconds_total": {"instance": "a"},
+    }
+
+    fetched = store.get(saved["id"])
+    assert fetched is not None
+    assert fetched["label_filters"] == saved["label_filters"]

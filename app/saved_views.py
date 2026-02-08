@@ -32,12 +32,13 @@ class SavedViewStore:
                     step_unit TEXT NOT NULL,
                     compare_enabled INTEGER NOT NULL DEFAULT 0,
                     label_filters_json TEXT NOT NULL DEFAULT '{}',
-                    query_string TEXT NOT NULL UNIQUE,
+                    query_string TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
+            self._migrate_saved_views_query_schema(conn)
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS dashboards (
@@ -64,19 +65,74 @@ class SavedViewStore:
             )
             conn.commit()
 
+    def _migrate_saved_views_query_schema(self, conn: sqlite3.Connection) -> None:
+        row = conn.execute(
+            """
+            SELECT sql
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'saved_views'
+            LIMIT 1
+            """
+        ).fetchone()
+        table_sql = str(row["sql"] if row else "")
+        if "query_string TEXT NOT NULL UNIQUE" not in table_sql:
+            return
+
+        conn.execute(
+            """
+            CREATE TABLE saved_views_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                metrics_csv TEXT NOT NULL,
+                window_amount INTEGER NOT NULL,
+                window_unit TEXT NOT NULL,
+                step_amount INTEGER NOT NULL,
+                step_unit TEXT NOT NULL,
+                compare_enabled INTEGER NOT NULL DEFAULT 0,
+                label_filters_json TEXT NOT NULL DEFAULT '{}',
+                query_string TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO saved_views_new (
+                id,
+                title,
+                metrics_csv,
+                window_amount,
+                window_unit,
+                step_amount,
+                step_unit,
+                compare_enabled,
+                label_filters_json,
+                query_string,
+                created_at,
+                updated_at
+            )
+            SELECT
+                id,
+                title,
+                metrics_csv,
+                window_amount,
+                window_unit,
+                step_amount,
+                step_unit,
+                compare_enabled,
+                label_filters_json,
+                query_string,
+                created_at,
+                updated_at
+            FROM saved_views
+            """
+        )
+        conn.execute("DROP TABLE saved_views")
+        conn.execute("ALTER TABLE saved_views_new RENAME TO saved_views")
+
     def _row_to_entry(self, row: sqlite3.Row) -> dict[str, Any]:
-        label_filters: dict[str, str] = {}
-        raw_filters = row["label_filters_json"] or "{}"
-        try:
-            parsed = json.loads(raw_filters)
-            if isinstance(parsed, dict):
-                label_filters = {
-                    str(key): str(value)
-                    for key, value in parsed.items()
-                    if isinstance(key, str) and key and isinstance(value, str) and value
-                }
-        except json.JSONDecodeError:
-            label_filters = {}
+        label_filters = _decode_label_filters_json(str(row["label_filters_json"] or "{}"))
 
         metrics = [chunk.strip() for chunk in row["metrics_csv"].split(",") if chunk.strip()]
         return {
@@ -161,25 +217,22 @@ class SavedViewStore:
         step_amount: int,
         step_unit: str,
         compare_enabled: bool,
-        label_filters: dict[str, str],
+        label_filters: dict[str, Any],
         query_string: str,
+        force_create: bool = False,
     ) -> tuple[dict[str, Any], bool]:
         label_filters_json = json.dumps(label_filters, sort_keys=True, separators=(",", ":"))
 
         with self._connect() as conn:
             existing_by_id: sqlite3.Row | None = None
+            existing_by_query: sqlite3.Row | None = None
+            inserted_id: int | None = None
+
             if saved_view_id is not None:
                 existing_by_id = conn.execute(
                     "SELECT id FROM saved_views WHERE id = ? LIMIT 1",
                     (saved_view_id,),
                 ).fetchone()
-                duplicate = conn.execute(
-                    "SELECT id FROM saved_views WHERE query_string = ? AND id <> ? LIMIT 1",
-                    (query_string, saved_view_id),
-                ).fetchone()
-                if duplicate is not None:
-                    conn.execute("DELETE FROM saved_views WHERE id = ?", (duplicate["id"],))
-
                 if existing_by_id is not None:
                     conn.execute(
                         """
@@ -211,49 +264,72 @@ class SavedViewStore:
                         ),
                     )
 
-            existing = conn.execute(
-                "SELECT id FROM saved_views WHERE query_string = ? LIMIT 1",
-                (query_string,),
-            ).fetchone()
-
             if existing_by_id is None:
-                conn.execute(
-                    """
-                    INSERT INTO saved_views(
-                        title,
-                        metrics_csv,
-                        window_amount,
-                        window_unit,
-                        step_amount,
-                        step_unit,
-                        compare_enabled,
-                        label_filters_json,
-                        query_string
+                if not force_create:
+                    existing_by_query = conn.execute(
+                        "SELECT id FROM saved_views WHERE query_string = ? ORDER BY id ASC LIMIT 1",
+                        (query_string,),
+                    ).fetchone()
+
+                if existing_by_query is not None:
+                    conn.execute(
+                        """
+                        UPDATE saved_views
+                        SET
+                            title = ?,
+                            metrics_csv = ?,
+                            window_amount = ?,
+                            window_unit = ?,
+                            step_amount = ?,
+                            step_unit = ?,
+                            compare_enabled = ?,
+                            label_filters_json = ?,
+                            query_string = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (
+                            title,
+                            metrics_csv,
+                            window_amount,
+                            window_unit,
+                            step_amount,
+                            step_unit,
+                            int(compare_enabled),
+                            label_filters_json,
+                            query_string,
+                            existing_by_query["id"],
+                        ),
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(query_string) DO UPDATE SET
-                        title = excluded.title,
-                        metrics_csv = excluded.metrics_csv,
-                        window_amount = excluded.window_amount,
-                        window_unit = excluded.window_unit,
-                        step_amount = excluded.step_amount,
-                        step_unit = excluded.step_unit,
-                        compare_enabled = excluded.compare_enabled,
-                        label_filters_json = excluded.label_filters_json,
-                        updated_at = CURRENT_TIMESTAMP
-                    """,
-                    (
-                        title,
-                        metrics_csv,
-                        window_amount,
-                        window_unit,
-                        step_amount,
-                        step_unit,
-                        int(compare_enabled),
-                        label_filters_json,
-                        query_string,
-                    ),
-                )
+                else:
+                    cursor = conn.execute(
+                        """
+                        INSERT INTO saved_views(
+                            title,
+                            metrics_csv,
+                            window_amount,
+                            window_unit,
+                            step_amount,
+                            step_unit,
+                            compare_enabled,
+                            label_filters_json,
+                            query_string
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            title,
+                            metrics_csv,
+                            window_amount,
+                            window_unit,
+                            step_amount,
+                            step_unit,
+                            int(compare_enabled),
+                            label_filters_json,
+                            query_string,
+                        ),
+                    )
+                    inserted_id = int(cursor.lastrowid)
             conn.commit()
 
             if existing_by_id is not None:
@@ -278,7 +354,7 @@ class SavedViewStore:
                     """,
                     (saved_view_id,),
                 ).fetchone()
-            else:
+            elif existing_by_query is not None:
                 row = conn.execute(
                     """
                     SELECT
@@ -295,15 +371,39 @@ class SavedViewStore:
                         created_at,
                         updated_at
                     FROM saved_views
-                    WHERE query_string = ?
+                    WHERE id = ?
                     LIMIT 1
                     """,
-                    (query_string,),
+                    (existing_by_query["id"],),
                 ).fetchone()
+            elif inserted_id is not None:
+                row = conn.execute(
+                    """
+                    SELECT
+                        id,
+                        title,
+                        metrics_csv,
+                        window_amount,
+                        window_unit,
+                        step_amount,
+                        step_unit,
+                        compare_enabled,
+                        label_filters_json,
+                        query_string,
+                        created_at,
+                        updated_at
+                    FROM saved_views
+                    WHERE id = ?
+                    LIMIT 1
+                    """,
+                    (inserted_id,),
+                ).fetchone()
+            else:
+                row = None
 
         if row is None:
             raise RuntimeError("failed to read saved view after write")
-        created = existing is None and existing_by_id is None
+        created = existing_by_id is None and existing_by_query is None
         return self._row_to_entry(row), created
 
     def remove(self, saved_view_id: int) -> bool:
@@ -566,15 +666,36 @@ class SavedViewStore:
         return True
 
 
-def _decode_label_filters_json(raw_filters: str) -> dict[str, str]:
+def _decode_label_filters_json(raw_filters: str) -> dict[str, Any]:
     try:
         parsed = json.loads(raw_filters)
     except json.JSONDecodeError:
         return {}
     if not isinstance(parsed, dict):
         return {}
-    cleaned: dict[str, str] = {}
+    cleaned: dict[str, Any] = {}
+    shared: dict[str, str] = {}
     for key, value in parsed.items():
-        if isinstance(key, str) and key and isinstance(value, str) and value:
-            cleaned[key] = value
-    return cleaned
+        if not isinstance(key, str) or not key:
+            continue
+        if isinstance(value, str):
+            if value:
+                shared[key] = value
+            continue
+        if not isinstance(value, dict):
+            continue
+        metric_filters = {
+            str(label_name): str(label_value)
+            for label_name, label_value in value.items()
+            if isinstance(label_name, str)
+            and label_name
+            and isinstance(label_value, str)
+            and label_value
+        }
+        if metric_filters:
+            cleaned[key] = metric_filters
+    if cleaned:
+        if shared:
+            cleaned["*"] = shared
+        return cleaned
+    return shared

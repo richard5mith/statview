@@ -33,6 +33,54 @@
     return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
   }
 
+  function iconPlaySvg() {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M8 6v12l10-6z" />
+      </svg>
+    `;
+  }
+
+  function iconStopSvg() {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M7 7h10v10H7z" />
+      </svg>
+    `;
+  }
+
+  function iconGraphSvg() {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M4 18h16M6 16l4-4 3 2 5-6"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </svg>
+    `;
+  }
+
+  function iconNumberSvg() {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <text x="12" y="16" text-anchor="middle">42</text>
+      </svg>
+    `;
+  }
+
+  function setLiveButtonContent(button, running) {
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+    button.innerHTML = `${running ? iconStopSvg() : iconPlaySvg()}<span>${
+      running ? "Stop Live" : "Start Live"
+    }</span>`;
+  }
+
   function clearLive() {
     if (liveTimer) {
       window.clearInterval(liveTimer);
@@ -503,22 +551,44 @@
       return;
     }
 
-    const rows = payload.summary_rows || [];
-    tbody.innerHTML = rows
-      .map((row) => {
-        const stats = row.stats || {};
-        return `
-          <tr>
-            <th scope="row">${row.label}</th>
-            <td>${humanize(valueOrDash(stats.latest))}</td>
-            <td>${humanize(valueOrDash(stats.min))}</td>
-            <td>${humanize(valueOrDash(stats.max))}</td>
-            <td>${humanize(valueOrDash(stats.median))}</td>
-            <td>${humanize(valueOrDash(stats.total))}</td>
-            <td>${humanize(valueOrDash(stats.p95))}</td>
-            <td>${humanize(valueOrDash(stats.p99))}</td>
+    const summaries =
+      Array.isArray(payload.metric_summaries) && payload.metric_summaries.length
+        ? payload.metric_summaries
+        : [
+            {
+              metric: payload.summary_metric || "",
+              rows: payload.summary_rows || [],
+            },
+          ];
+    const showMetricHeader = summaries.length > 1;
+    tbody.innerHTML = summaries
+      .map((summary) => {
+        const rows = Array.isArray(summary.rows) ? summary.rows : [];
+        const header = showMetricHeader
+          ? `
+          <tr class="summary-metric-row">
+            <th scope="colgroup" colspan="8">${summary.metric || "Metric"}</th>
           </tr>
-        `;
+        `
+          : "";
+        const body = rows
+          .map((row) => {
+            const stats = row.stats || {};
+            return `
+              <tr>
+                <th scope="row">${row.label}</th>
+                <td>${humanize(valueOrDash(stats.latest))}</td>
+                <td>${humanize(valueOrDash(stats.min))}</td>
+                <td>${humanize(valueOrDash(stats.max))}</td>
+                <td>${humanize(valueOrDash(stats.median))}</td>
+                <td>${humanize(valueOrDash(stats.total))}</td>
+                <td>${humanize(valueOrDash(stats.p95))}</td>
+                <td>${humanize(valueOrDash(stats.p99))}</td>
+              </tr>
+            `;
+          })
+          .join("");
+        return `${header}${body}`;
       })
       .join("");
   }
@@ -531,24 +601,47 @@
   }
 
   function renderPresetStats(payload) {
-    (payload.presets || []).forEach((preset) => {
-      const tbody = document.querySelector(`[data-preset-stats='${preset.id}']`);
+    const metricPayloads = Array.isArray(payload.payloads) ? payload.payloads : [];
+    const basePresets = Array.isArray(payload.presets) ? payload.presets : [];
+    const showMetricHeader = metricPayloads.length > 1;
+
+    basePresets.forEach((basePreset) => {
+      const tbody = document.querySelector(`[data-preset-stats='${basePreset.id}']`);
       if (!(tbody instanceof HTMLElement)) {
         return;
       }
 
-      const rows = preset.stats_rows || [];
-      tbody.innerHTML = rows
-        .map((row) => {
-          const deltaClass = pctClass(row.delta_pct);
-          return `
-            <tr>
-              <th scope="row">${row.label}</th>
-              <td>${humanize(valueOrDash(row.current))}</td>
-              <td>${humanize(valueOrDash(row.previous))}</td>
-              <td class="${deltaClass}">${formatPct(row.delta_pct)}</td>
-            </tr>
-          `;
+      tbody.innerHTML = metricPayloads
+        .map((metricPayload) => {
+          const metricPreset = (metricPayload.presets || []).find(
+            (preset) => preset.id === basePreset.id,
+          );
+          const rows = metricPreset?.stats_rows || [];
+          if (!rows.length) {
+            return "";
+          }
+
+          const header = showMetricHeader
+            ? `
+              <tr class="preset-metric-row">
+                <th scope="colgroup" colspan="4">${metricPayload.metric}</th>
+              </tr>
+            `
+            : "";
+          const rowMarkup = rows
+            .map((row) => {
+              const deltaClass = pctClass(row.delta_pct);
+              return `
+                <tr>
+                  <th scope="row">${row.label}</th>
+                  <td>${humanize(valueOrDash(row.current))}</td>
+                  <td>${humanize(valueOrDash(row.previous))}</td>
+                  <td class="${deltaClass}">${formatPct(row.delta_pct)}</td>
+                </tr>
+              `;
+            })
+            .join("");
+          return `${header}${rowMarkup}`;
         })
         .join("");
     });
@@ -686,16 +779,20 @@
 
   function controls(panel) {
     const labelFilters = {};
-    panel.querySelectorAll("[data-tag-filter]").forEach((element) => {
+    panel.querySelectorAll("[data-tag-filter-label]").forEach((element) => {
       if (!(element instanceof HTMLSelectElement)) {
         return;
       }
-      const labelName = element.dataset.tagFilter;
+      const metricName = element.dataset.tagFilterMetric;
+      const labelName = element.dataset.tagFilterLabel;
       const labelValue = element.value;
-      if (!labelName || !labelValue) {
+      if (!metricName || !labelName || !labelValue) {
         return;
       }
-      labelFilters[labelName] = labelValue;
+      if (!labelFilters[metricName]) {
+        labelFilters[metricName] = {};
+      }
+      labelFilters[metricName][labelName] = labelValue;
     });
     const compareToggle = panel.querySelector("[data-control='compare_enabled']");
     const compareEnabled =
@@ -808,7 +905,10 @@
     if (!button) {
       return;
     }
-    button.textContent = liveEnabled ? "Stop Live" : "Start Live";
+    setLiveButtonContent(
+      button instanceof HTMLButtonElement ? button : null,
+      liveEnabled,
+    );
     button.classList.toggle("live-on", liveEnabled);
   }
 
@@ -877,14 +977,89 @@
   }
 
   function syncSaveButtonMode(panel) {
-    const button = panel.querySelector("[data-action='save']");
-    if (!(button instanceof HTMLButtonElement)) {
+    const isUpdate = Boolean((panel.dataset.savedId || "").trim());
+    const saveButton = panel.querySelector("[data-action='save']");
+    if (saveButton instanceof HTMLButtonElement) {
+      const label = isUpdate ? "Update" : "Save";
+      saveButton.dataset.defaultLabel = label;
+      setSaveButtonLabel(saveButton, label);
+    }
+    const saveNewButton = panel.querySelector("[data-action='save-new']");
+    if (saveNewButton instanceof HTMLButtonElement) {
+      saveNewButton.hidden = !isUpdate;
+      saveNewButton.dataset.defaultLabel = "Save New";
+      setSaveButtonLabel(saveNewButton, "Save New");
+    }
+  }
+
+  async function submitSave(panel, button, options = {}) {
+    const forceCreate = Boolean(options.forceCreate);
+    if (!(button instanceof HTMLButtonElement) || button.disabled) {
       return;
     }
-    const isUpdate = Boolean((panel.dataset.savedId || "").trim());
-    const label = isUpdate ? "Update" : "Save";
-    button.dataset.defaultLabel = label;
-    setSaveButtonLabel(button, label);
+    if (!(panel.dataset.metrics || "").trim()) {
+      window.alert("Add at least one metric before saving.");
+      return;
+    }
+
+    const isUpdating = Boolean((panel.dataset.savedId || "").trim());
+    let saveTitle = "";
+    if (forceCreate || !isUpdating) {
+      const promptedName = await promptForSaveName(panel);
+      if (typeof promptedName !== "string") {
+        return;
+      }
+      saveTitle = promptedName;
+    }
+
+    const defaultLabel = button.dataset.defaultLabel || (forceCreate ? "Save New" : "Save");
+    button.dataset.defaultLabel = defaultLabel;
+    button.disabled = true;
+    button.classList.remove("saved-ok", "saved-error");
+    setSaveButtonLabel(button, "Saving...");
+    try {
+      const payload = controls(panel);
+      if (saveTitle) {
+        payload.title = saveTitle;
+      }
+      if (forceCreate) {
+        payload.saved_id = "";
+        payload.save_as_new = "1";
+      }
+      const response = await fetch("/api/saved", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.error || "Failed to save view");
+      }
+
+      if (typeof body.id === "number") {
+        panel.dataset.savedId = String(body.id);
+        syncUrl(panel);
+        syncSaveButtonMode(panel);
+      }
+      setSaveButtonLabel(button, body.created ? "Saved" : "Updated");
+      button.classList.add("saved-ok");
+    } catch (err) {
+      setSaveButtonLabel(button, "Failed");
+      button.classList.add("saved-error");
+      renderError(err);
+    } finally {
+      button.disabled = false;
+      window.setTimeout(() => {
+        if (!(button instanceof HTMLButtonElement) || !button.isConnected) {
+          return;
+        }
+        setSaveButtonLabel(button, button.dataset.defaultLabel || (forceCreate ? "Save New" : "Save"));
+        button.classList.remove("saved-ok", "saved-error");
+      }, 1400);
+    }
   }
 
   function bindPanel(panel) {
@@ -900,9 +1075,40 @@
     }
     syncSaveButtonMode(panel);
 
-    const controlsToWatch = panel.querySelectorAll("[data-control], [data-tag-filter]");
+    const controlsToWatch = panel.querySelectorAll("[data-control], [data-tag-filter-label]");
     controlsToWatch.forEach((element) => {
       element.addEventListener("change", () => {
+        scheduleRefresh(panel, panelId);
+      });
+    });
+
+    panel.querySelectorAll("[data-preset-focus='1']").forEach((button) => {
+      if (!(button instanceof HTMLButtonElement)) {
+        return;
+      }
+      button.addEventListener("click", () => {
+        const windowAmount = button.dataset.windowAmount || "";
+        const windowUnit = button.dataset.windowUnit || "";
+        const stepAmount = button.dataset.stepAmount || "";
+        const stepUnit = button.dataset.stepUnit || "";
+
+        const windowAmountField = panel.querySelector("[data-control='window_amount']");
+        const windowUnitField = panel.querySelector("[data-control='window_unit']");
+        const stepAmountField = panel.querySelector("[data-control='step_amount']");
+        const stepUnitField = panel.querySelector("[data-control='step_unit']");
+
+        if (windowAmountField instanceof HTMLInputElement && windowAmount) {
+          windowAmountField.value = windowAmount;
+        }
+        if (windowUnitField instanceof HTMLSelectElement && windowUnit) {
+          windowUnitField.value = windowUnit;
+        }
+        if (stepAmountField instanceof HTMLInputElement && stepAmount) {
+          stepAmountField.value = stepAmount;
+        }
+        if (stepUnitField instanceof HTMLSelectElement && stepUnit) {
+          stepUnitField.value = stepUnit;
+        }
         scheduleRefresh(panel, panelId);
       });
     });
@@ -968,75 +1174,79 @@
 
     panel.querySelector("[data-action='save']")?.addEventListener("click", async () => {
       const button = panel.querySelector("[data-action='save']");
-      if (!(button instanceof HTMLButtonElement)) {
-        return;
-      }
-      if (button.disabled) {
-        return;
-      }
-      if (!(panel.dataset.metrics || "").trim()) {
-        window.alert("Add at least one metric before saving.");
-        return;
-      }
+      await submitSave(panel, button, { forceCreate: false });
+    });
 
-      const isUpdating = Boolean((panel.dataset.savedId || "").trim());
-      let saveTitle = "";
-      if (!isUpdating) {
-        const promptedName = await promptForSaveName(panel);
-        if (typeof promptedName !== "string") {
-          return;
-        }
-        saveTitle = promptedName;
-      }
-
-      const defaultLabel = button.dataset.defaultLabel || "Save";
-      button.dataset.defaultLabel = defaultLabel;
-      button.disabled = true;
-      button.classList.remove("saved-ok", "saved-error");
-      setSaveButtonLabel(button, "Saving...");
-      try {
-        const payload = controls(panel);
-        if (saveTitle) {
-          payload.title = saveTitle;
-        }
-        const response = await fetch("/api/saved", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify(payload),
-        });
-        const body = await response.json();
-        if (!response.ok) {
-          throw new Error(body.error || "Failed to save view");
-        }
-
-        if (typeof body.id === "number") {
-          panel.dataset.savedId = String(body.id);
-          syncUrl(panel);
-          syncSaveButtonMode(panel);
-        }
-        setSaveButtonLabel(button, body.created ? "Saved" : "Updated");
-        button.classList.add("saved-ok");
-      } catch (err) {
-        setSaveButtonLabel(button, "Failed");
-        button.classList.add("saved-error");
-        renderError(err);
-      } finally {
-        button.disabled = false;
-        window.setTimeout(() => {
-          if (!(button instanceof HTMLButtonElement) || !button.isConnected) {
-            return;
-          }
-          setSaveButtonLabel(button, button.dataset.defaultLabel || "Save");
-          button.classList.remove("saved-ok", "saved-error");
-        }, 1400);
-      }
+    panel.querySelector("[data-action='save-new']")?.addEventListener("click", async () => {
+      const button = panel.querySelector("[data-action='save-new']");
+      await submitSave(panel, button, { forceCreate: true });
     });
   }
 
-  function renderDashboardTile(tile) {
+  function parseDashboardPayloadScript(tile) {
+    if (!(tile instanceof HTMLElement)) {
+      return null;
+    }
+    const payloadScript = tile.querySelector("[data-role='dashboard-payload']");
+    if (!(payloadScript instanceof HTMLScriptElement)) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(payloadScript.textContent || "null");
+    } catch {
+      return null;
+    }
+  }
+
+  function parseDashboardTileConfig(tile) {
+    if (!(tile instanceof HTMLElement)) {
+      return null;
+    }
+    const metrics = (tile.dataset.dashboardMetrics || "")
+      .split(",")
+      .map((metric) => metric.trim())
+      .filter(Boolean);
+    if (!metrics.length) {
+      return null;
+    }
+
+    let labelFilters = {};
+    const rawLabelFilters = tile.dataset.dashboardLabelFilters || "{}";
+    try {
+      const parsed = JSON.parse(rawLabelFilters);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        labelFilters = parsed;
+      }
+    } catch {
+      labelFilters = {};
+    }
+    return { metrics, labelFilters };
+  }
+
+  function dashboardSavedControlsFromPayload(payload) {
+    const windowAmountRaw =
+      payload && typeof payload === "object" ? payload.window?.amount : undefined;
+    const windowUnitRaw =
+      payload && typeof payload === "object" ? payload.window?.unit : undefined;
+    const stepAmountRaw = payload && typeof payload === "object" ? payload.step?.amount : undefined;
+    const stepUnitRaw = payload && typeof payload === "object" ? payload.step?.unit : undefined;
+    const compareRaw = payload && typeof payload === "object" ? payload.compare?.enabled : false;
+    const windowAmount = Math.max(1, Number.parseInt(String(windowAmountRaw ?? "1"), 10) || 1);
+    const stepAmount = Math.max(1, Number.parseInt(String(stepAmountRaw ?? "1"), 10) || 1);
+    const windowUnit = typeof windowUnitRaw === "string" && windowUnitRaw ? windowUnitRaw : "week";
+    const stepUnit = typeof stepUnitRaw === "string" && stepUnitRaw ? stepUnitRaw : "hour";
+    const compareEnabled = Boolean(compareRaw);
+    return {
+      window_amount: String(windowAmount),
+      window_unit: windowUnit,
+      step_amount: String(stepAmount),
+      step_unit: stepUnit,
+      compare_enabled: compareEnabled ? "1" : "0",
+    };
+  }
+
+  function setDashboardPayloadScript(tile, payload) {
     if (!(tile instanceof HTMLElement)) {
       return;
     }
@@ -1044,12 +1254,87 @@
     if (!(payloadScript instanceof HTMLScriptElement)) {
       return;
     }
-
-    let payload = null;
     try {
-      payload = JSON.parse(payloadScript.textContent || "null");
-    } catch {
-      payload = null;
+      payloadScript.textContent = JSON.stringify(payload);
+    } catch (err) {
+      console.error("Failed to serialize dashboard payload", err);
+    }
+  }
+
+  function latestValueFromPoints(points) {
+    if (!Array.isArray(points)) {
+      return null;
+    }
+    for (let index = points.length - 1; index >= 0; index -= 1) {
+      const value = Number(points[index]?.v);
+      if (Number.isFinite(value)) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  function renderDashboardLatest(tile, payload) {
+    if (!(tile instanceof HTMLElement)) {
+      return;
+    }
+    const latestFrame = tile.querySelector("[data-dashboard-latest]");
+    if (!(latestFrame instanceof HTMLElement)) {
+      return;
+    }
+    const metricPayloads =
+      payload && typeof payload === "object" && Array.isArray(payload.payloads) ? payload.payloads : [];
+    if (!metricPayloads.length) {
+      latestFrame.innerHTML = `<div class="empty-box">No data.</div>`;
+      return;
+    }
+
+    latestFrame.innerHTML = `
+      <div class="dashboard-latest-list">
+        ${metricPayloads
+          .map((metricPayload) => {
+            const latest = latestValueFromPoints(metricPayload?.primary?.aggregate?.points);
+            const value = latest === null ? "-" : humanize(latest);
+            return `
+              <div class="dashboard-latest-item">
+                <div class="dashboard-latest-name">${metricPayload.metric}</div>
+                <div class="dashboard-latest-value">${value}</div>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  }
+
+  function applyDashboardTileDisplayMode(tile) {
+    if (!(tile instanceof HTMLElement)) {
+      return;
+    }
+    const mode = tile.dataset.dashboardDisplayMode === "latest" ? "latest" : "chart";
+    const toggle = tile.querySelector("[data-dashboard-display-toggle]");
+    const chartFrame = tile.querySelector(".dashboard-chart-frame");
+    const latestFrame = tile.querySelector("[data-dashboard-latest]");
+
+    if (toggle instanceof HTMLButtonElement) {
+      toggle.setAttribute("aria-pressed", mode === "latest" ? "true" : "false");
+      toggle.setAttribute(
+        "aria-label",
+        mode === "latest" ? "Show graph" : "Show latest value",
+      );
+      toggle.innerHTML = mode === "latest" ? iconGraphSvg() : iconNumberSvg();
+    }
+    if (chartFrame instanceof HTMLElement) {
+      chartFrame.hidden = mode === "latest";
+    }
+    if (latestFrame instanceof HTMLElement) {
+      latestFrame.hidden = mode !== "latest";
+    }
+  }
+
+  function renderDashboardTilePayload(tile, payload) {
+    if (!(tile instanceof HTMLElement)) {
+      return;
     }
     if (!payload || !Array.isArray(payload.payloads) || !payload.payloads.length) {
       return;
@@ -1105,6 +1390,13 @@
       Number(primaryPayload.primary.end),
       false,
     );
+    renderDashboardLatest(tile, payload);
+    applyDashboardTileDisplayMode(tile);
+  }
+
+  function renderDashboardTile(tile) {
+    const payload = parseDashboardPayloadScript(tile);
+    renderDashboardTilePayload(tile, payload);
   }
 
   function initDashboardPage() {
@@ -1117,12 +1409,344 @@
       return;
     }
 
+    const dashboardId = Number.parseInt(page.dataset.dashboardId || "", 10);
+    const displayStateKey =
+      Number.isFinite(dashboardId) && dashboardId > 0
+        ? `statview-dashboard-display:${dashboardId}`
+        : `statview-dashboard-display:${window.location.pathname}`;
+
+    const readDashboardDisplayModes = () => {
+      try {
+        const raw = window.localStorage.getItem(displayStateKey);
+        if (!raw) {
+          return {};
+        }
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          return {};
+        }
+        return parsed;
+      } catch {
+        return {};
+      }
+    };
+
+    const rememberedDisplayModes = readDashboardDisplayModes();
+    const persistDashboardDisplayModes = () => {
+      try {
+        window.localStorage.setItem(displayStateKey, JSON.stringify(rememberedDisplayModes));
+      } catch {
+        // Ignore localStorage failures.
+      }
+    };
+
+    const dashboardItemKey = (tile) => {
+      if (!(tile instanceof HTMLElement)) {
+        return null;
+      }
+      const itemId = Number.parseInt(tile.dataset.dashboardItemId || "", 10);
+      if (!Number.isFinite(itemId) || itemId <= 0) {
+        return null;
+      }
+      return String(itemId);
+    };
+
     grid.querySelectorAll("[data-dashboard-item-id]").forEach((tile) => {
+      if (tile instanceof HTMLElement) {
+        const itemKey = dashboardItemKey(tile);
+        const rememberedMode =
+          itemKey && rememberedDisplayModes[itemKey] === "latest" ? "latest" : "chart";
+        tile.dataset.dashboardDisplayMode = rememberedMode;
+      }
       renderDashboardTile(tile);
+    });
+
+    grid.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const toggle = target?.closest("[data-dashboard-display-toggle]");
+      if (!(toggle instanceof HTMLButtonElement)) {
+        return;
+      }
+      const tile = toggle.closest("[data-dashboard-item-id]");
+      if (!(tile instanceof HTMLElement)) {
+        return;
+      }
+      event.preventDefault();
+      tile.dataset.dashboardDisplayMode =
+        tile.dataset.dashboardDisplayMode === "latest" ? "chart" : "latest";
+      const itemKey = dashboardItemKey(tile);
+      if (itemKey) {
+        rememberedDisplayModes[itemKey] = tile.dataset.dashboardDisplayMode;
+        persistDashboardDisplayModes();
+      }
+      applyDashboardTileDisplayMode(tile);
+      if (tile.dataset.dashboardDisplayMode === "chart") {
+        const canvas = tile.querySelector("canvas");
+        if (canvas instanceof HTMLCanvasElement) {
+          const chart = chartMap[canvas.id] || Chart.getChart(canvas);
+          if (chart) {
+            window.requestAnimationFrame(() => {
+              try {
+                chart.resize();
+              } catch (err) {
+                console.error("Failed to resize dashboard chart after display toggle", err);
+              }
+            });
+          }
+        }
+      }
     });
     bindChartFrameObserver();
 
-    const dashboardId = Number.parseInt(page.dataset.dashboardId || "", 10);
+    const controlsRoot = document.querySelector("[data-dashboard-controls='1']");
+    const overrideToggle =
+      controlsRoot instanceof HTMLElement
+        ? controlsRoot.querySelector("[data-dashboard-control='override_enabled']")
+        : null;
+    const overrideTargets =
+      controlsRoot instanceof HTMLElement
+        ? Array.from(controlsRoot.querySelectorAll("[data-dashboard-control]")).filter(
+            (element) => element !== overrideToggle,
+          )
+        : [];
+
+    const isDashboardOverrideEnabled = () =>
+      overrideToggle instanceof HTMLInputElement &&
+      overrideToggle.type === "checkbox" &&
+      overrideToggle.checked;
+
+    const setDashboardOverrideState = (enabled) => {
+      if (!(controlsRoot instanceof HTMLElement)) {
+        return;
+      }
+      controlsRoot.dataset.overrideEnabled = enabled ? "1" : "0";
+      overrideTargets.forEach((element) => {
+        if (element instanceof HTMLInputElement || element instanceof HTMLSelectElement) {
+          element.disabled = !enabled;
+        }
+      });
+    };
+
+    const dashboardControlValues = () => {
+      if (!(controlsRoot instanceof HTMLElement)) {
+        return {
+          window_amount: "1",
+          window_unit: "week",
+          step_amount: "1",
+          step_unit: "hour",
+          compare_enabled: "0",
+        };
+      }
+      const windowAmountField = controlsRoot.querySelector(
+        "[data-dashboard-control='window_amount']",
+      );
+      const stepAmountField = controlsRoot.querySelector("[data-dashboard-control='step_amount']");
+      const windowUnitField = controlsRoot.querySelector("[data-dashboard-control='window_unit']");
+      const stepUnitField = controlsRoot.querySelector("[data-dashboard-control='step_unit']");
+      const compareField = controlsRoot.querySelector("[data-dashboard-control='compare_enabled']");
+      const windowAmount =
+        windowAmountField instanceof HTMLInputElement
+          ? Math.max(1, Number.parseInt(windowAmountField.value || "1", 10) || 1)
+          : 1;
+      const stepAmount =
+        stepAmountField instanceof HTMLInputElement
+          ? Math.max(1, Number.parseInt(stepAmountField.value || "1", 10) || 1)
+          : 1;
+      const compareEnabled =
+        compareField instanceof HTMLInputElement && compareField.type === "checkbox"
+          ? compareField.checked
+          : false;
+      return {
+        window_amount: String(windowAmount),
+        window_unit:
+          windowUnitField instanceof HTMLSelectElement
+            ? windowUnitField.value || "week"
+            : "week",
+        step_amount: String(stepAmount),
+        step_unit: stepUnitField instanceof HTMLSelectElement ? stepUnitField.value || "hour" : "hour",
+        compare_enabled: compareEnabled ? "1" : "0",
+      };
+    };
+
+    let dashboardRefreshToken = 0;
+    let dashboardRefreshTimer = null;
+    let dashboardLiveTimer = null;
+    let dashboardLiveEnabled = false;
+    const dashboardLiveButton =
+      controlsRoot instanceof HTMLElement
+        ? controlsRoot.querySelector("[data-dashboard-action='live']")
+        : null;
+    const dashboardRefreshButton =
+      controlsRoot instanceof HTMLElement
+        ? controlsRoot.querySelector("[data-dashboard-action='refresh']")
+        : null;
+
+    const setDashboardLiveButtonState = () => {
+      if (!(dashboardLiveButton instanceof HTMLButtonElement)) {
+        return;
+      }
+      setLiveButtonContent(dashboardLiveButton, dashboardLiveEnabled);
+      dashboardLiveButton.classList.toggle("live-on", dashboardLiveEnabled);
+    };
+
+    const clearDashboardLive = () => {
+      if (dashboardLiveTimer) {
+        window.clearInterval(dashboardLiveTimer);
+        dashboardLiveTimer = null;
+      }
+      dashboardLiveEnabled = false;
+      setDashboardLiveButtonState();
+    };
+
+    const restoreDashboardSavedCharts = () => {
+      dashboardRefreshToken += 1;
+      if (dashboardRefreshTimer) {
+        window.clearTimeout(dashboardRefreshTimer);
+        dashboardRefreshTimer = null;
+      }
+      grid.querySelectorAll("[data-dashboard-item-id]").forEach((tile) => {
+        renderDashboardTile(tile);
+      });
+      bindChartFrameObserver();
+    };
+
+    const refreshDashboardCharts = async () => {
+      const token = ++dashboardRefreshToken;
+      const useOverride = isDashboardOverrideEnabled();
+      const overrideValues = dashboardControlValues();
+      const tiles = Array.from(grid.querySelectorAll("[data-dashboard-item-id]"));
+      const results = await Promise.allSettled(
+        tiles.map(async (tile) => {
+          if (!(tile instanceof HTMLElement)) {
+            return null;
+          }
+          const config = parseDashboardTileConfig(tile);
+          if (!config) {
+            return null;
+          }
+
+          const savedPayload = parseDashboardPayloadScript(tile);
+          const savedValues = dashboardSavedControlsFromPayload(savedPayload);
+          const values = useOverride ? overrideValues : savedValues;
+          const params = new URLSearchParams({
+            metrics: config.metrics.join(","),
+            window_amount: values.window_amount,
+            window_unit: values.window_unit,
+            step_amount: values.step_amount,
+            step_unit: values.step_unit,
+            compare_enabled: values.compare_enabled,
+            label_filters: JSON.stringify(config.labelFilters || {}),
+          });
+          const response = await fetch(`/api/view-data?${params.toString()}`, {
+            headers: { Accept: "application/json" },
+          });
+          const body = await response.json();
+          if (!response.ok) {
+            throw new Error(body.error || "Failed to refresh dashboard chart");
+          }
+          return { tile, payload: body, persistAsSaved: !useOverride };
+        }),
+      );
+
+      if (token !== dashboardRefreshToken) {
+        return;
+      }
+
+      let hasFailure = false;
+      results.forEach((result) => {
+        if (result.status === "fulfilled") {
+          if (result.value) {
+            if (result.value.persistAsSaved) {
+              setDashboardPayloadScript(result.value.tile, result.value.payload);
+            }
+            renderDashboardTilePayload(result.value.tile, result.value.payload);
+          }
+          return;
+        }
+        hasFailure = true;
+        console.error("Dashboard chart refresh failed", result.reason);
+      });
+      bindChartFrameObserver();
+      if (hasFailure) {
+        renderError(new Error("Failed to refresh one or more dashboard charts."));
+      }
+    };
+
+    const scheduleDashboardRefresh = () => {
+      if (!isDashboardOverrideEnabled()) {
+        return;
+      }
+      if (dashboardRefreshTimer) {
+        window.clearTimeout(dashboardRefreshTimer);
+      }
+      dashboardRefreshTimer = window.setTimeout(() => {
+        refreshDashboardCharts().catch((err) => renderError(err));
+      }, 280);
+    };
+
+    if (controlsRoot instanceof HTMLElement) {
+      setDashboardLiveButtonState();
+      setDashboardOverrideState(isDashboardOverrideEnabled());
+      if (overrideToggle instanceof HTMLInputElement) {
+        overrideToggle.addEventListener("change", () => {
+          const enabled = isDashboardOverrideEnabled();
+          setDashboardOverrideState(enabled);
+          if (enabled) {
+            scheduleDashboardRefresh();
+            return;
+          }
+          restoreDashboardSavedCharts();
+        });
+      }
+      overrideTargets.forEach((element) => {
+        element.addEventListener("change", scheduleDashboardRefresh);
+        if (element instanceof HTMLInputElement && element.type === "number") {
+          element.addEventListener("input", scheduleDashboardRefresh);
+        }
+      });
+
+      if (dashboardRefreshButton instanceof HTMLButtonElement) {
+        dashboardRefreshButton.addEventListener("click", () => {
+          refreshDashboardCharts().catch((err) => renderError(err));
+        });
+      }
+
+      if (dashboardLiveButton instanceof HTMLButtonElement) {
+        dashboardLiveButton.addEventListener("click", async () => {
+          if (dashboardLiveEnabled) {
+            clearDashboardLive();
+            return;
+          }
+
+          const seconds = Number.parseInt(
+            controlsRoot.dataset.liveRefreshSeconds || "15",
+            10,
+          );
+          const intervalMs = Math.max(1, Number.isFinite(seconds) ? seconds : 15) * 1000;
+          clearDashboardLive();
+          dashboardLiveEnabled = true;
+          setDashboardLiveButtonState();
+
+          try {
+            await refreshDashboardCharts();
+          } catch (err) {
+            clearDashboardLive();
+            renderError(err);
+            return;
+          }
+
+          dashboardLiveTimer = window.setInterval(async () => {
+            try {
+              await refreshDashboardCharts();
+            } catch (err) {
+              clearDashboardLive();
+              renderError(err);
+            }
+          }, intervalMs);
+        });
+      }
+    }
+
     if (!Number.isFinite(dashboardId) || dashboardId <= 0) {
       return;
     }

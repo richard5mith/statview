@@ -12,6 +12,91 @@
         <button type="button" data-action="open-add-saved-modal">Add saved stat</button>
       </div>
     </div>
+    <div
+      class="control-row"
+      data-dashboard-controls="1"
+      data-override-enabled="0"
+      data-live-refresh-seconds="{{ live_refresh_seconds }}"
+    >
+      <label class="compare-toggle override-toggle">
+        <input type="checkbox" data-dashboard-control="override_enabled" />
+        Override
+      </label>
+
+      <label>
+        Last
+        <input
+          type="number"
+          min="1"
+          value="{{ default_dashboard_window_amount }}"
+          data-dashboard-control="window_amount"
+          disabled
+        />
+      </label>
+
+      <label>
+        Timeframe unit
+        <select data-dashboard-control="window_unit" disabled>
+          {% for unit in window_units %}
+          <option value="{{ unit }}" {% if default_dashboard_window_unit == unit %}selected{% endif %}>
+            {{ unit }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <span class="control-text">@</span>
+
+      <label>
+        Every
+        <input
+          type="number"
+          min="1"
+          value="{{ default_dashboard_step_amount }}"
+          data-dashboard-control="step_amount"
+          disabled
+        />
+      </label>
+
+      <label>
+        Per
+        <select data-dashboard-control="step_unit" disabled>
+          {% for unit in step_units %}
+          <option value="{{ unit }}" {% if default_dashboard_step_unit == unit %}selected{% endif %}>
+            {{ unit }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="compare-toggle">
+        <input
+          type="checkbox"
+          data-dashboard-control="compare_enabled"
+          {% if default_dashboard_compare_enabled %}checked{% endif %}
+          disabled
+        />
+        Compare to previous period
+      </label>
+
+      <div class="control-actions">
+        <button type="button" data-dashboard-action="refresh" aria-label="Refresh">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path
+              d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span>Refresh</span>
+        </button>
+        <button type="button" data-dashboard-action="live" data-action="live">Start Live</button>
+      </div>
+    </div>
+    <p class="helper-text">Enable override to temporarily change all charts. Saved stat settings are unchanged.</p>
   </section>
 
   {% if not cards %}
@@ -27,11 +112,25 @@
         data-dashboard-tile
         data-dashboard-item-id="{{ card.dashboard_item_id }}"
         data-saved-id="{{ card.saved_view_id }}"
+        data-dashboard-metrics="{{ card.metrics_csv }}"
+        data-dashboard-label-filters="{{ card.label_filters_json }}"
         draggable="true"
       >
         <div class="dashboard-tile-header">
           <a href="{{ card.view_url }}" class="dashboard-tile-title" data-saved-title>{{ card.title }}</a>
           <div class="dashboard-tile-actions">
+            <button
+              type="button"
+              class="icon-btn dashboard-display-toggle"
+              data-dashboard-display-toggle
+              aria-pressed="false"
+              aria-label="Show latest value"
+              {% if not card.payload %}disabled{% endif %}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <text x="12" y="16" text-anchor="middle">42</text>
+              </svg>
+            </button>
             <button
               type="button"
               class="icon-btn"
@@ -55,6 +154,7 @@
         <div class="chart-frame dashboard-chart-frame">
           <canvas id="dashboard-chart-{{ card.dashboard_item_id }}"></canvas>
         </div>
+        <div class="dashboard-value-frame" data-dashboard-latest hidden></div>
         {% endif %}
       </article>
       {% endfor %}

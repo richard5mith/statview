@@ -60,28 +60,36 @@
 
       <header class="panel-header">
         <h2>{{ selected_metrics | map(attribute='name') | join(" • ") }}</h2>
-        <p>The summary and preset tables are shown for the first selected metric.</p>
       </header>
 
       <section class="tag-filter-section">
-        <h3>Tag filters</h3>
-        {% if view_payload.filters.available %}
-        <div class="tag-filter-grid">
-          {% for label_name, values in view_payload.filters.available.items() %}
-          <label>
-            {{ label_name }}
-            <select data-tag-filter="{{ label_name }}">
-              <option value="">All</option>
-              {% for value in values %}
-              <option value="{{ value }}" {% if view_payload.filters.selected.get(label_name) == value %}selected{% endif %}>{{ value }}</option>
+        <div class="tag-filter-metric-list">
+          {% for metric_payload in view_payload.payloads %}
+          <div class="tag-filter-metric-block">
+            <h4>{{ metric_payload.metric }}</h4>
+            {% if metric_payload.filters.available %}
+            <div class="tag-filter-grid">
+              {% for label_name, values in metric_payload.filters.available.items() %}
+              <label>
+                {{ label_name }}
+                <select
+                  data-tag-filter-metric="{{ metric_payload.metric }}"
+                  data-tag-filter-label="{{ label_name }}"
+                >
+                  <option value="">All</option>
+                  {% for value in values %}
+                  <option value="{{ value }}" {% if metric_payload.filters.selected.get(label_name) == value %}selected{% endif %}>{{ value }}</option>
+                  {% endfor %}
+                </select>
+              </label>
               {% endfor %}
-            </select>
-          </label>
+            </div>
+            {% else %}
+            <div class="empty-box">No tags found for {{ metric_payload.metric }}.</div>
+            {% endif %}
+          </div>
           {% endfor %}
         </div>
-        {% else %}
-        <div class="empty-box">No tags found for {{ view_payload.summary_metric }}.</div>
-        {% endif %}
       </section>
 
       <div class="control-row">
@@ -128,7 +136,30 @@
             </svg>
             <span data-save-label>{% if selected_saved_id %}Update{% else %}Save{% endif %}</span>
           </button>
-          <button type="button" data-action="refresh">Refresh</button>
+          <button
+            type="button"
+            data-action="save-new"
+            aria-label="Save as new"
+            {% if not selected_saved_id %}hidden{% endif %}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M5 12h14M12 5v14" />
+            </svg>
+            <span data-save-label>Save New</span>
+          </button>
+          <button type="button" data-action="refresh" aria-label="Refresh">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span>Refresh</span>
+          </button>
           <button type="button" data-action="live">Start Live</button>
         </div>
       </div>
@@ -168,7 +199,30 @@
         <div class="chart-grid chart-grid-presets">
           {% for preset in view_payload.presets %}
           <article class="chart-card compact">
-            <h4>{{ preset.label }}</h4>
+            <div class="preset-card-head">
+              <h4>{{ preset.label }}</h4>
+              <button
+                type="button"
+                class="icon-btn preset-focus-btn"
+                data-preset-focus="1"
+                data-window-amount="{{ preset.window_amount }}"
+                data-window-unit="{{ preset.window_unit }}"
+                data-step-amount="{{ preset.step_amount }}"
+                data-step-unit="{{ preset.step_unit }}"
+                aria-label="Apply this timeframe to main chart"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path
+                    d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6zM12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
             <div class="chart-frame preset-chart-frame">
               <canvas id="preset-chart-{{ preset.id }}"></canvas>
             </div>

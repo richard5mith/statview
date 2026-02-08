@@ -91,6 +91,78 @@ def _parse_label_filters(raw: str | None) -> dict[str, str]:
     return cleaned
 
 
+def _parse_metric_label_filters_object(raw: object) -> dict[str, dict[str, str]]:
+    if not isinstance(raw, dict):
+        return {}
+
+    nested: dict[str, dict[str, str]] = {}
+    shared: dict[str, str] = {}
+    for metric_or_label, value in raw.items():
+        if not isinstance(metric_or_label, str) or not metric_or_label:
+            continue
+        if isinstance(value, str):
+            if value:
+                shared[metric_or_label] = value
+            continue
+        if not isinstance(value, dict):
+            continue
+        cleaned = {
+            str(label_name): str(label_value)
+            for label_name, label_value in value.items()
+            if isinstance(label_name, str)
+            and label_name
+            and isinstance(label_value, str)
+            and label_value
+        }
+        if cleaned:
+            nested[metric_or_label] = cleaned
+
+    if shared:
+        if nested:
+            nested["*"] = shared
+            return nested
+        return {"*": shared}
+    return nested
+
+
+def _parse_metric_label_filters(raw: str | None) -> dict[str, dict[str, str]]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return _parse_metric_label_filters_object(parsed)
+
+
+def _resolve_metric_label_filters(
+    selected_metrics: list[str],
+    parsed_metric_filters: dict[str, dict[str, str]],
+) -> dict[str, dict[str, str]]:
+    shared = parsed_metric_filters.get("*", {})
+    resolved: dict[str, dict[str, str]] = {}
+    for metric in selected_metrics:
+        metric_filters = dict(shared)
+        metric_filters.update(parsed_metric_filters.get(metric, {}))
+        resolved[metric] = metric_filters
+    return resolved
+
+
+def _sanitize_metric_label_filters(
+    client: PrometheusClient,
+    selected_metrics: list[str],
+    metric_label_filters: dict[str, dict[str, str]],
+) -> dict[str, dict[str, str]]:
+    sanitized: dict[str, dict[str, str]] = {}
+    for metric in selected_metrics:
+        available_filters = client.metric_label_options(metric)
+        sanitized[metric] = _sanitize_label_filters(
+            metric_label_filters.get(metric, {}),
+            available_filters,
+        )
+    return sanitized
+
+
 def _pluralize(unit: str, amount: int) -> str:
     if amount == 1:
         return unit
@@ -300,7 +372,7 @@ def _build_view_query_string(
     step_amount: int,
     step_unit: str,
     compare_enabled: bool,
-    label_filters: dict[str, str],
+    metric_label_filters: dict[str, dict[str, str]],
 ) -> str:
     params: list[tuple[str, str]] = [
         ("metrics", ",".join(metrics)),
@@ -310,11 +382,16 @@ def _build_view_query_string(
         ("step_unit", step_unit),
         ("compare_enabled", "1" if compare_enabled else "0"),
     ]
-    if label_filters:
+    non_empty_filters = {
+        metric_name: filters
+        for metric_name, filters in metric_label_filters.items()
+        if filters
+    }
+    if non_empty_filters:
         params.append(
             (
                 "label_filters",
-                json.dumps(label_filters, sort_keys=True, separators=(",", ":")),
+                json.dumps(non_empty_filters, sort_keys=True, separators=(",", ":")),
             )
         )
     return urlencode(params)
@@ -343,7 +420,7 @@ def _build_view_payload(
     window_unit: str,
     step_amount: int,
     step_unit: str,
-    label_filters: dict[str, str],
+    metric_label_filters: dict[str, dict[str, str]],
     compare_enabled: bool,
 ) -> dict[str, Any]:
     metric_payloads = [
@@ -355,21 +432,33 @@ def _build_view_payload(
             window_unit=window_unit,
             step_amount=step_amount,
             step_unit=step_unit,
-            label_filters=label_filters,
+            label_filters=metric_label_filters.get(metric_name, {}),
             compare_enabled=compare_enabled,
         )
         for metric_name in metrics
     ]
 
     primary_payload = metric_payloads[0]
+    metric_summaries = [
+        {
+            "metric": payload["metric"],
+            "rows": payload.get("summary_rows", []),
+        }
+        for payload in metric_payloads
+    ]
     return {
         "metrics": metrics,
         "window": primary_payload["window"],
         "step": primary_payload["step"],
         "filters": primary_payload["filters"],
+        "metric_filters": {
+            payload["metric"]: payload.get("filters", {})
+            for payload in metric_payloads
+        },
         "compare": primary_payload["compare"],
         "payloads": metric_payloads,
         "presets": primary_payload["presets"],
+        "metric_summaries": metric_summaries,
         "summary_rows": primary_payload["summary_rows"],
         "summary_metric": primary_payload["metric"],
     }
@@ -452,6 +541,10 @@ def _build_payload(
                 "label": preset["label"],
                 "window": preset["window"],
                 "step": preset["step"],
+                "window_amount": int(preset["window_amount"]),
+                "window_unit": str(preset["window_unit"]),
+                "step_amount": int(preset["step_amount"]),
+                "step_unit": str(preset["step_unit"]),
                 "previous_offset": preset_previous_offset,
                 "previous_offset_seconds": parse_prometheus_duration(preset_previous_offset),
                 "previous_label": f"previous {preset['label']}",
@@ -555,7 +648,7 @@ def create_app(
             DEFAULT_STEP_UNIT,
         )
         compare_enabled = _parse_bool(request.args.get("compare_enabled"), False)
-        label_filters = _parse_label_filters(request.args.get("label_filters"))
+        raw_metric_label_filters = _parse_metric_label_filters(request.args.get("label_filters"))
 
         metrics: list[dict[str, str]] = []
         metrics_error: str | None = None
@@ -573,11 +666,20 @@ def create_app(
                 selected_metrics.append(add_metric)
         if remove_metric:
             selected_metrics = [name for name in selected_metrics if name != remove_metric]
+        metric_label_filters = _resolve_metric_label_filters(
+            selected_metrics,
+            raw_metric_label_filters,
+        )
 
         view_payload: dict[str, Any] | None = None
         view_error: str | None = None
         if selected_metrics:
             try:
+                metric_label_filters = _sanitize_metric_label_filters(
+                    app.config["prometheus_client"],
+                    selected_metrics,
+                    metric_label_filters,
+                )
                 view_payload = _build_view_payload(
                     app.config["prometheus_client"],
                     metrics=selected_metrics,
@@ -586,7 +688,7 @@ def create_app(
                     window_unit=window_unit,
                     step_amount=step_amount,
                     step_unit=step_unit,
-                    label_filters=label_filters,
+                    metric_label_filters=metric_label_filters,
                     compare_enabled=compare_enabled,
                 )
             except (PrometheusError, ValueError, OSError) as exc:
@@ -609,16 +711,27 @@ def create_app(
                 "step_amount": step_amount,
                 "step_unit": step_unit,
                 "compare_enabled": "1" if compare_enabled else "0",
-                "label_filters": json.dumps(label_filters) if label_filters else "",
+                "label_filters": (
+                    json.dumps(metric_label_filters, sort_keys=True, separators=(",", ":"))
+                    if metric_label_filters
+                    else ""
+                ),
             }
             if selected_saved_id is not None:
                 remove_params["saved_id"] = selected_saved_id
             remove_urls[metric_name] = url_for("index", **remove_params)
 
         default_label_filters = (
-            view_payload.get("filters", {}).get("selected", label_filters)
+            {
+                metric_payload.get("metric", ""): metric_payload.get("filters", {}).get(
+                    "selected",
+                    {},
+                )
+                for metric_payload in view_payload.get("payloads", [])
+                if metric_payload.get("metric")
+            }
             if view_payload
-            else label_filters
+            else metric_label_filters
         )
 
         return render_template(
@@ -766,6 +879,8 @@ def create_app(
                             f"{url_for('index')}"
                             f"?saved_id={item['saved_view_id']}&{item['query_string']}"
                         ),
+                        "metrics_csv": "",
+                        "label_filters_json": "{}",
                         "payload": None,
                         "error": "One or more metrics no longer exist in Prometheus.",
                     }
@@ -773,6 +888,10 @@ def create_app(
                 continue
 
             try:
+                metric_label_filters = _resolve_metric_label_filters(
+                    selected_metrics,
+                    dict(item["label_filters"]),
+                )
                 payload = _build_view_payload(
                     app.config["prometheus_client"],
                     metrics=selected_metrics,
@@ -781,7 +900,7 @@ def create_app(
                     window_unit=str(item["window_unit"]),
                     step_amount=int(item["step_amount"]),
                     step_unit=str(item["step_unit"]),
-                    label_filters=dict(item["label_filters"]),
+                    metric_label_filters=metric_label_filters,
                     compare_enabled=bool(item["compare_enabled"]),
                 )
                 error: str | None = None
@@ -797,10 +916,62 @@ def create_app(
                     "view_url": (
                         f"{url_for('index')}?saved_id={item['saved_view_id']}&{item['query_string']}"
                     ),
+                    "metrics_csv": ",".join(selected_metrics),
+                    "label_filters_json": json.dumps(
+                        dict(item["label_filters"]),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
                     "payload": payload,
                     "error": error,
                 }
             )
+
+        default_dashboard_window_amount = DEFAULT_WINDOW_AMOUNT
+        default_dashboard_window_unit = DEFAULT_WINDOW_UNIT
+        default_dashboard_step_amount = DEFAULT_STEP_AMOUNT
+        default_dashboard_step_unit = DEFAULT_STEP_UNIT
+        default_dashboard_compare_enabled = False
+        first_payload = next(
+            (
+                card.get("payload")
+                for card in cards
+                if isinstance(card.get("payload"), dict)
+            ),
+            None,
+        )
+        if isinstance(first_payload, dict):
+            window = first_payload.get("window")
+            step = first_payload.get("step")
+            compare = first_payload.get("compare")
+            if isinstance(window, dict):
+                default_dashboard_window_amount = _sanitize_positive_int(
+                    str(window.get("amount", default_dashboard_window_amount)),
+                    default_dashboard_window_amount,
+                )
+                default_dashboard_window_unit = str(
+                    window.get("unit", default_dashboard_window_unit)
+                )
+                default_dashboard_window_unit = _sanitize_choice(
+                    default_dashboard_window_unit,
+                    WINDOW_UNITS,
+                    DEFAULT_WINDOW_UNIT,
+                )
+            if isinstance(step, dict):
+                default_dashboard_step_amount = _sanitize_positive_int(
+                    str(step.get("amount", default_dashboard_step_amount)),
+                    default_dashboard_step_amount,
+                )
+                default_dashboard_step_unit = str(step.get("unit", default_dashboard_step_unit))
+                default_dashboard_step_unit = _sanitize_choice(
+                    default_dashboard_step_unit,
+                    STEP_UNITS,
+                    DEFAULT_STEP_UNIT,
+                )
+            if isinstance(compare, dict):
+                default_dashboard_compare_enabled = bool(
+                    compare.get("enabled", default_dashboard_compare_enabled)
+                )
 
         return render_template(
             "dashboard_detail.html",
@@ -808,6 +979,14 @@ def create_app(
             cards=cards,
             saved_views=saved_views,
             current_url=request.path,
+            window_units=WINDOW_UNITS,
+            step_units=STEP_UNITS,
+            default_dashboard_window_amount=default_dashboard_window_amount,
+            default_dashboard_window_unit=default_dashboard_window_unit,
+            default_dashboard_step_amount=default_dashboard_step_amount,
+            default_dashboard_step_unit=default_dashboard_step_unit,
+            default_dashboard_compare_enabled=default_dashboard_compare_enabled,
+            live_refresh_seconds=app.config["settings"].live_refresh_seconds,
             active_nav="dashboards",
         )
 
@@ -864,27 +1043,41 @@ def create_app(
         saved_view_id = _sanitize_optional_positive_int(
             str(payload_dict.get("saved_id", "")).strip() or request.form.get("saved_id")
         )
+        save_as_new_raw = payload_dict.get("save_as_new")
+        if save_as_new_raw is None:
+            save_as_new_raw = request.form.get("save_as_new")
+        save_as_new = _parse_bool(
+            str(save_as_new_raw) if save_as_new_raw is not None else None,
+            False,
+        )
+        if save_as_new:
+            saved_view_id = None
         title_raw = str(payload_dict.get("title", "")).strip() or request.form.get(
             "title",
             "",
         ).strip()
 
         label_filters_raw = payload_dict.get("label_filters")
-        label_filters = (
-            _parse_label_filters(json.dumps(label_filters_raw))
+        metric_label_filters = (
+            _parse_metric_label_filters_object(label_filters_raw)
             if isinstance(label_filters_raw, dict)
-            else _parse_label_filters(str(label_filters_raw) if label_filters_raw else None)
+            else _parse_metric_label_filters(str(label_filters_raw) if label_filters_raw else None)
         )
-        if not label_filters:
-            label_filters = _parse_label_filters(request.form.get("label_filters"))
+        if not metric_label_filters:
+            metric_label_filters = _parse_metric_label_filters(request.form.get("label_filters"))
+        metric_label_filters = _resolve_metric_label_filters(
+            selected_metrics,
+            metric_label_filters,
+        )
 
         try:
-            available_filters = app.config["prometheus_client"].metric_label_options(
-                selected_metrics[0]
+            metric_label_filters = _sanitize_metric_label_filters(
+                app.config["prometheus_client"],
+                selected_metrics,
+                metric_label_filters,
             )
-            label_filters = _sanitize_label_filters(label_filters, available_filters)
         except (PrometheusError, OSError):
-            label_filters = {}
+            metric_label_filters = {metric_name: {} for metric_name in selected_metrics}
 
         query_string = _build_view_query_string(
             metrics=selected_metrics,
@@ -893,7 +1086,7 @@ def create_app(
             step_amount=step_amount,
             step_unit=step_unit,
             compare_enabled=compare_enabled,
-            label_filters=label_filters,
+            metric_label_filters=metric_label_filters,
         )
         if title_raw:
             title = title_raw
@@ -936,8 +1129,9 @@ def create_app(
             step_amount=step_amount,
             step_unit=step_unit,
             compare_enabled=compare_enabled,
-            label_filters=label_filters,
+            label_filters=metric_label_filters,
             query_string=query_string,
+            force_create=save_as_new,
         )
 
         return (
@@ -1055,7 +1249,10 @@ def create_app(
             DEFAULT_STEP_UNIT,
         )
         compare_enabled = _parse_bool(request.args.get("compare_enabled"), False)
-        label_filters = _parse_label_filters(request.args.get("label_filters"))
+        metric_label_filters = _resolve_metric_label_filters(
+            selected_metrics,
+            _parse_metric_label_filters(request.args.get("label_filters")),
+        )
 
         try:
             metric_type_map = _metric_types(metric_catalog)
@@ -1067,7 +1264,7 @@ def create_app(
                 window_unit=window_unit,
                 step_amount=step_amount,
                 step_unit=step_unit,
-                label_filters=label_filters,
+                metric_label_filters=metric_label_filters,
                 compare_enabled=compare_enabled,
             )
         except (PrometheusError, ValueError, OSError) as exc:

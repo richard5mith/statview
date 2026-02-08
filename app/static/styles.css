@@ -418,6 +418,24 @@ button:hover {
   margin-top: 0.35rem;
 }
 
+.tag-filter-metric-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.tag-filter-metric-block {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.55rem;
+  background: color-mix(in srgb, var(--panel-soft) 92%, transparent);
+}
+
+.tag-filter-metric-block h4 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
 .tag-filter-grid label {
   display: grid;
   gap: 0.25rem;
@@ -446,13 +464,15 @@ button:hover {
   gap: 0.5rem;
 }
 
-[data-action="save"] {
+[data-action="save"],
+[data-action="save-new"] {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
 }
 
-[data-action="save"] svg {
+[data-action="save"] svg,
+[data-action="save-new"] svg {
   width: 0.95rem;
   height: 0.95rem;
   fill: none;
@@ -462,12 +482,14 @@ button:hover {
   stroke-linejoin: round;
 }
 
-[data-action="save"].saved-ok {
+[data-action="save"].saved-ok,
+[data-action="save-new"].saved-ok {
   border-color: #2ea35f;
   color: #2ea35f;
 }
 
-[data-action="save"].saved-error {
+[data-action="save"].saved-error,
+[data-action="save-new"].saved-error {
   border-color: var(--danger);
   color: var(--danger);
 }
@@ -495,6 +517,11 @@ button:hover {
   gap: 0.4rem;
 }
 
+.control-row[data-override-enabled="0"] label:not(.override-toggle),
+.control-row[data-override-enabled="0"] .control-text {
+  opacity: 0.55;
+}
+
 .compare-toggle input {
   width: auto;
 }
@@ -502,6 +529,29 @@ button:hover {
 [data-action="live"].live-on {
   border-color: var(--accent-2);
   background: color-mix(in srgb, var(--accent-2) 18%, transparent);
+}
+
+[data-action="live"],
+[data-dashboard-action="live"],
+[data-action="refresh"],
+[data-dashboard-action="refresh"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+[data-action="live"] svg,
+[data-dashboard-action="live"] svg,
+[data-action="refresh"] svg,
+[data-dashboard-action="refresh"] svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+[data-action="live"] svg,
+[data-dashboard-action="live"] svg {
+  fill: currentColor;
+  stroke: none;
 }
 
 .chart-grid {
@@ -538,6 +588,28 @@ button:hover {
 .chart-card h4 {
   margin: 0 0 0.6rem;
   color: var(--text);
+}
+
+.preset-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.preset-card-head h4 {
+  margin-bottom: 0.55rem;
+}
+
+.preset-focus-btn {
+  width: 1.9rem;
+  height: 1.9rem;
+  flex-shrink: 0;
+}
+
+.preset-focus-btn svg {
+  width: 1.08rem;
+  height: 1.08rem;
 }
 
 .chart-frame {
@@ -599,6 +671,13 @@ button:hover {
   color: var(--text);
 }
 
+.summary-table .summary-metric-row th {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-top: 1px solid var(--line);
+  font-weight: 700;
+}
+
 .preset-stats-table {
   width: 100%;
   border-collapse: collapse;
@@ -637,6 +716,15 @@ button:hover {
 
 .preset-stats-table td.neutral {
   color: var(--text-subtle);
+}
+
+.preset-stats-table .preset-metric-row th {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-top: 1px solid var(--line);
+  font-weight: 700;
+  text-transform: none;
+  width: auto;
 }
 
 .error-box,
@@ -725,8 +813,8 @@ button:hover {
 }
 
 .icon-btn svg {
-  width: 0.95rem;
-  height: 0.95rem;
+  width: 1.08rem;
+  height: 1.08rem;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
@@ -778,6 +866,14 @@ button:hover {
 
 .dashboard-header-card {
   margin-bottom: 1rem;
+}
+
+.dashboard-header-card .control-row {
+  margin-top: 0.8rem;
+}
+
+.dashboard-header-card .helper-text {
+  margin: 0.45rem 0 0;
 }
 
 .dashboard-header {
@@ -844,6 +940,23 @@ button:hover {
   flex-shrink: 0;
 }
 
+.dashboard-display-toggle[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 64%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.dashboard-display-toggle svg {
+  width: 1.42rem;
+  height: 1.42rem;
+}
+
+.dashboard-display-toggle svg text {
+  fill: currentColor;
+  font-family: "Inter", "Segoe UI", sans-serif;
+  font-weight: 500;
+  font-size: 0.72rem;
+}
+
 .dashboard-tile-title:hover {
   color: var(--accent);
 }
@@ -873,6 +986,42 @@ button:hover {
 
 .dashboard-chart-frame {
   height: 290px;
+}
+
+.dashboard-value-frame {
+  min-height: 290px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-soft) 92%, transparent);
+  padding: 0.8rem;
+  display: grid;
+  align-content: center;
+}
+
+.dashboard-value-frame[hidden] {
+  display: none !important;
+}
+
+.dashboard-latest-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.dashboard-latest-item {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.dashboard-latest-name {
+  color: var(--text-subtle);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-latest-value {
+  font-size: clamp(1.25rem, 2vw, 1.75rem);
+  font-weight: 700;
+  line-height: 1.15;
 }
 
 .modal {
@@ -1097,5 +1246,9 @@ button:hover {
 
   .dashboard-chart-frame {
     height: 250px;
+  }
+
+  .dashboard-value-frame {
+    min-height: 250px;
   }
 }
