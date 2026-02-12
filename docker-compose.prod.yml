@@ -1,11 +1,10 @@
 services:
   statview:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: statview:prod
-    ports:
-      - "8000:8000"
-    env_file:
-      - .env
+    environment:
+      STATVIEW_MODE: prod
     restart: unless-stopped
+    volumes:
+      - statview-data:/app/data
+
+volumes:
+  statview-data:

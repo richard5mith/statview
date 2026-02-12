@@ -1,0 +1,14 @@
+services:
+  statview:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: statview:latest
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      STATVIEW_MODE: prod
+      STATVIEW_DATA_DIR: /app/data
+      RUN_DB_MIGRATIONS: "1"

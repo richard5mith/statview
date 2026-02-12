@@ -1,0 +1,9 @@
+services:
+  statview:
+    environment:
+      STATVIEW_MODE: dev
+    volumes:
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+      - ./data:/app/data

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
-import uuid
 from typing import Any
+
+import pytest
 
 from app.config import Settings
 from app.main import create_app
+from tests.test_support import TEST_DB_PATH
+
+pytestmark = pytest.mark.usefixtures("test_db")
 
 
 class FakePrometheusClient:
@@ -70,14 +74,14 @@ class FakePrometheusClient:
 
 
 def _test_app():
-    db_path = f"/tmp/statview-test-saved-{uuid.uuid4().hex}.sqlite3"
     return create_app(
         settings=Settings(
             prometheus_url="http://example",
             live_refresh_seconds=5,
-            saved_db_path=db_path,
+            saved_db_path=str(TEST_DB_PATH),
         ),
         prometheus_client=FakePrometheusClient(),
+        run_migrations=False,
     )
 
 

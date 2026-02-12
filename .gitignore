@@ -64,6 +64,7 @@ db.sqlite3
 db.sqlite3-journal
 statview-stars.db
 statview-saved.db
+data/
 
 # Flask stuff:
 instance/

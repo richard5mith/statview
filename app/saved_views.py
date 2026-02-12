@@ -2,134 +2,17 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from pathlib import Path
 from typing import Any
 
 
 class SavedViewStore:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
-        self._ensure_db()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         return connection
-
-    def _ensure_db(self) -> None:
-        parent = Path(self.db_path).expanduser().resolve().parent
-        parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS saved_views (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT NOT NULL,
-                    metrics_csv TEXT NOT NULL,
-                    window_amount INTEGER NOT NULL,
-                    window_unit TEXT NOT NULL,
-                    step_amount INTEGER NOT NULL,
-                    step_unit TEXT NOT NULL,
-                    compare_enabled INTEGER NOT NULL DEFAULT 0,
-                    label_filters_json TEXT NOT NULL DEFAULT '{}',
-                    query_string TEXT NOT NULL,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            self._migrate_saved_views_query_schema(conn)
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS dashboards (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS dashboard_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    dashboard_id INTEGER NOT NULL,
-                    saved_view_id INTEGER NOT NULL,
-                    position INTEGER NOT NULL,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(dashboard_id, saved_view_id),
-                    FOREIGN KEY (dashboard_id) REFERENCES dashboards(id) ON DELETE CASCADE,
-                    FOREIGN KEY (saved_view_id) REFERENCES saved_views(id) ON DELETE CASCADE
-                )
-                """
-            )
-            conn.commit()
-
-    def _migrate_saved_views_query_schema(self, conn: sqlite3.Connection) -> None:
-        row = conn.execute(
-            """
-            SELECT sql
-            FROM sqlite_master
-            WHERE type = 'table' AND name = 'saved_views'
-            LIMIT 1
-            """
-        ).fetchone()
-        table_sql = str(row["sql"] if row else "")
-        if "query_string TEXT NOT NULL UNIQUE" not in table_sql:
-            return
-
-        conn.execute(
-            """
-            CREATE TABLE saved_views_new (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                metrics_csv TEXT NOT NULL,
-                window_amount INTEGER NOT NULL,
-                window_unit TEXT NOT NULL,
-                step_amount INTEGER NOT NULL,
-                step_unit TEXT NOT NULL,
-                compare_enabled INTEGER NOT NULL DEFAULT 0,
-                label_filters_json TEXT NOT NULL DEFAULT '{}',
-                query_string TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        conn.execute(
-            """
-            INSERT INTO saved_views_new (
-                id,
-                title,
-                metrics_csv,
-                window_amount,
-                window_unit,
-                step_amount,
-                step_unit,
-                compare_enabled,
-                label_filters_json,
-                query_string,
-                created_at,
-                updated_at
-            )
-            SELECT
-                id,
-                title,
-                metrics_csv,
-                window_amount,
-                window_unit,
-                step_amount,
-                step_unit,
-                compare_enabled,
-                label_filters_json,
-                query_string,
-                created_at,
-                updated_at
-            FROM saved_views
-            """
-        )
-        conn.execute("DROP TABLE saved_views")
-        conn.execute("ALTER TABLE saved_views_new RENAME TO saved_views")
 
     def _row_to_entry(self, row: sqlite3.Row) -> dict[str, Any]:
         label_filters = _decode_label_filters_json(str(row["label_filters_json"] or "{}"))

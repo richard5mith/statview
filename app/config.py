@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -12,12 +13,33 @@ class Settings:
     live_refresh_seconds: int = field(
         default_factory=lambda: int(os.getenv("LIVE_REFRESH_SECONDS", "15"))
     )
+    app_data_dir: str = field(
+        default_factory=lambda: os.getenv(
+            "STATVIEW_DATA_DIR",
+            os.getenv("APP_DATA_DIR", "./data"),
+        )
+    )
+    saved_db_filename: str = field(
+        default_factory=lambda: os.getenv("STATVIEW_DB_FILENAME", "statview.sqlite3")
+    )
     saved_db_path: str = field(
         default_factory=lambda: os.getenv(
             "SAVED_DB_PATH",
-            os.getenv("STAR_DB_PATH", "statview-saved.db"),
+            os.getenv("STAR_DB_PATH", ""),
         )
     )
+
+    def __post_init__(self) -> None:
+        data_dir = Path(self.app_data_dir).expanduser().resolve(strict=False)
+        db_path_raw = self.saved_db_path.strip()
+        db_path = (
+            Path(db_path_raw).expanduser().resolve(strict=False)
+            if db_path_raw
+            else (data_dir / self.saved_db_filename).resolve(strict=False)
+        )
+
+        object.__setattr__(self, "app_data_dir", str(data_dir))
+        object.__setattr__(self, "saved_db_path", str(db_path))
 
 
 WINDOW_UNITS = ["hour", "day", "week", "month", "year"]

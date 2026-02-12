@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import pytest
+
 from app.saved_views import SavedViewStore
+from tests.test_support import TEST_DB_PATH
+
+pytestmark = pytest.mark.usefixtures("test_db")
 
 
-def test_saved_view_store_save_list_and_remove(tmp_path) -> None:
-    db_path = tmp_path / "saved.sqlite3"
-    store = SavedViewStore(str(db_path))
+def test_saved_view_store_save_list_and_remove() -> None:
+    store = SavedViewStore(str(TEST_DB_PATH))
 
     assert store.list() == []
 
@@ -44,9 +48,8 @@ def test_saved_view_store_save_list_and_remove(tmp_path) -> None:
     assert store.list() == []
 
 
-def test_saved_view_store_dashboards_and_items(tmp_path) -> None:
-    db_path = tmp_path / "saved.sqlite3"
-    store = SavedViewStore(str(db_path))
+def test_saved_view_store_dashboards_and_items() -> None:
+    store = SavedViewStore(str(TEST_DB_PATH))
 
     saved, _ = store.save(
         title="up • 1 week @ 1 hour • no compare",
@@ -81,9 +84,8 @@ def test_saved_view_store_dashboards_and_items(tmp_path) -> None:
     assert renamed["title"] == "Renamed"
 
 
-def test_saved_view_store_edge_cases(tmp_path) -> None:
-    db_path = tmp_path / "saved.sqlite3"
-    store = SavedViewStore(str(db_path))
+def test_saved_view_store_edge_cases() -> None:
+    store = SavedViewStore(str(TEST_DB_PATH))
 
     assert store.get(999999) is None
     assert store.rename(999999, "x") is None
@@ -95,9 +97,8 @@ def test_saved_view_store_edge_cases(tmp_path) -> None:
     assert store.reorder_dashboard_items(dashboard["id"], []) is False
 
 
-def test_saved_view_store_force_create_allows_duplicate_query_strings(tmp_path) -> None:
-    db_path = tmp_path / "saved.sqlite3"
-    store = SavedViewStore(str(db_path))
+def test_saved_view_store_force_create_allows_duplicate_query_strings() -> None:
+    store = SavedViewStore(str(TEST_DB_PATH))
 
     first, created_first = store.save(
         title="first",
@@ -129,9 +130,8 @@ def test_saved_view_store_force_create_allows_duplicate_query_strings(tmp_path) 
     assert len(store.list()) == 2
 
 
-def test_saved_view_store_persists_per_metric_label_filters(tmp_path) -> None:
-    db_path = tmp_path / "saved.sqlite3"
-    store = SavedViewStore(str(db_path))
+def test_saved_view_store_persists_per_metric_label_filters() -> None:
+    store = SavedViewStore(str(TEST_DB_PATH))
 
     saved, created = store.save(
         title="multi",
