@@ -24,7 +24,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"
 
-RUN groupadd --system --gid 1000 statview \
+# gosu lets the entrypoint drop privileges from root to the statview user after
+# fixing ownership on any mounted volume (Railway, k8s, etc. mount volumes as root).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gosu \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system --gid 1000 statview \
  && useradd --system --uid 1000 --gid statview --create-home --home-dir /home/statview --shell /usr/sbin/nologin statview
 
 WORKDIR /app
@@ -40,7 +45,9 @@ RUN chmod +x /app/scripts/entrypoint.sh \
  && mkdir -p /app/data \
  && chown -R statview:statview /app
 
-USER statview:statview
+# Container starts as root so the entrypoint can chown the data volume before
+# dropping privileges. If a USER is set externally (e.g. docker-compose `user:`),
+# the entrypoint detects it and skips the chown/drop step.
 
 EXPOSE 8000
 
