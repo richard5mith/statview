@@ -6,10 +6,9 @@ StatView is a Flask + HTMX frontend for Prometheus metrics.
 
 I wanted to browse through my metrics, see the latest info, see a comparison of other time periods, and easily send the URL of a specific metric to colleagues.
 
-But I don't want to create dashboards in Grafana, which is just not designed for browsing through your metrics in a consistent manner.
+I don't want to create dashboards in advance based on guessing what I might want to see. And Grafana makes it really hard to even quickly change a graph from one stat to another.
 
 I also loved StatHat, RIP.
-
 
 ## Security model
 
@@ -51,10 +50,12 @@ The button above deploys StatView from this repo using the included [`railway.to
 ## How does Prometheus support this?
 
 Prometheus stores time-series samples keyed by metric name and labels. This app uses:
+
 - `/api/v1/label/__name__/values` to list all metric names.
 - `/api/v1/query_range` to fetch graph data for chosen time windows.
 
 That directly supports:
+
 - Metric browsing.
 - Click-to-graph behavior.
 - Window/step selection.
@@ -132,6 +133,7 @@ cp .env.example .env
 ```
 
 Default local `docker compose` uses `docker-compose.yml` + `docker-compose.override.yml`:
+
 - Starts in dev mode (`flask --debug`)
 - Runs migrations on startup
 - Uses `/app/data` for persistent sqlite data inside the container
