@@ -298,7 +298,10 @@ def _build_aggregate_query(
             return f"sum(rate({metric_query}[{rate_window}]))"
         return f"avg({metric_query})"
 
-    return f"sum({metric_query})"
+    if metric_type == "gauge":
+        return f"avg({metric_query})"
+
+    return f"avg({metric_query})"
 
 
 def _pct_change(current: float | None, previous: float | None) -> float | None:

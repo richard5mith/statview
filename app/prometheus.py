@@ -59,6 +59,21 @@ def fallback_metric_type(metric_name: str) -> str:
     return "untyped"
 
 
+_METRIC_TYPE_LABEL_MAP: dict[str, str] = {
+    "timing": "gauge",
+    "gauge": "gauge",
+    "set": "gauge",
+    "histogram": "gauge",
+    "counter": "counter",
+}
+
+
+def metric_type_from_label(label_value: str | None) -> str | None:
+    if not label_value:
+        return None
+    return _METRIC_TYPE_LABEL_MAP.get(label_value)
+
+
 def parse_prometheus_duration(duration: str) -> int:
     """Parse Prometheus durations like 5m, 1h30m, 7d into seconds."""
     if not duration:
@@ -222,12 +237,41 @@ class PrometheusClient:
 
         return resolved
 
+    def metric_type_labels(self) -> dict[str, str]:
+        try:
+            data = self._fetch("/api/v1/series", params={"match[]": '{metric_type!=""}'})
+        except (httpx.HTTPError, PrometheusError, ValueError):
+            return {}
+
+        if not isinstance(data, list):
+            return {}
+
+        resolved: dict[str, str] = {}
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            metric_name = item.get("__name__")
+            label_value = item.get("metric_type")
+            if not isinstance(metric_name, str) or not metric_name:
+                continue
+            if not isinstance(label_value, str) or not label_value:
+                continue
+            existing = resolved.get(metric_name)
+            if existing is None or label_value < existing:
+                resolved[metric_name] = label_value
+        return resolved
+
     def list_metric_catalog(self) -> list[dict[str, str]]:
         names = self.list_metric_names()
         types = self.metric_types()
+        label_types = self.metric_type_labels()
         catalog: list[dict[str, str]] = []
         for name in names:
             metric_type = types.get(name, "unknown")
+            if metric_type == "unknown":
+                from_label = metric_type_from_label(label_types.get(name))
+                if from_label is not None:
+                    metric_type = from_label
             if metric_type == "unknown":
                 metric_type = fallback_metric_type(name)
             catalog.append({"name": name, "type": metric_type})

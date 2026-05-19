@@ -13,6 +13,7 @@ from app.prometheus import (
     _split_credentials,
     aggregate_series_points,
     fallback_metric_type,
+    metric_type_from_label,
     normalize_metric_type,
     parse_prometheus_duration,
     series_label,
@@ -51,6 +52,20 @@ def test_fallback_metric_type() -> None:
     assert fallback_metric_type("latency_quantile") == "summary"
     assert fallback_metric_type("latency_sum") == "counter"
     assert fallback_metric_type("up") == "untyped"
+
+
+def test_metric_type_from_label_maps_known_values() -> None:
+    assert metric_type_from_label("timing") == "gauge"
+    assert metric_type_from_label("gauge") == "gauge"
+    assert metric_type_from_label("set") == "gauge"
+    assert metric_type_from_label("histogram") == "gauge"
+    assert metric_type_from_label("counter") == "counter"
+
+
+def test_metric_type_from_label_returns_none_for_unknown() -> None:
+    assert metric_type_from_label("weird") is None
+    assert metric_type_from_label("") is None
+    assert metric_type_from_label(None) is None
 
 
 def test_query_range_transforms_points() -> None:
@@ -153,6 +168,108 @@ def test_list_metric_catalog_uses_fallback_when_metadata_missing() -> None:
     ]
 
 
+def test_list_metric_catalog_uses_metric_type_label_when_metadata_missing() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/label/__name__/values":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": ["web_response_time", "db_calls", "http_requests_total"],
+                },
+            )
+        if request.url.path == "/api/v1/metadata":
+            return httpx.Response(200, json={"status": "success", "data": {}})
+        if request.url.path == "/api/v1/series":
+            assert request.url.params.get("match[]") == '{metric_type!=""}'
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": [
+                        {"__name__": "web_response_time", "metric_type": "timing"},
+                        {"__name__": "db_calls", "metric_type": "counter"},
+                    ],
+                },
+            )
+        return httpx.Response(404, json={"status": "error", "error": "not found"})
+
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="http://test",
+    )
+    client = PrometheusClient("http://test", http_client=http_client)
+
+    catalog = client.list_metric_catalog()
+    assert catalog == [
+        {"name": "db_calls", "type": "counter"},
+        {"name": "http_requests_total", "type": "counter"},
+        {"name": "web_response_time", "type": "gauge"},
+    ]
+
+
+def test_list_metric_catalog_metadata_wins_over_metric_type_label() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/label/__name__/values":
+            return httpx.Response(
+                200,
+                json={"status": "success", "data": ["weird"]},
+            )
+        if request.url.path == "/api/v1/metadata":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": {"weird": [{"type": "counter"}]},
+                },
+            )
+        if request.url.path == "/api/v1/series":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": [{"__name__": "weird", "metric_type": "timing"}],
+                },
+            )
+        return httpx.Response(404, json={"status": "error", "error": "not found"})
+
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="http://test",
+    )
+    client = PrometheusClient("http://test", http_client=http_client)
+
+    assert client.list_metric_catalog() == [{"name": "weird", "type": "counter"}]
+
+
+def test_list_metric_catalog_unknown_label_falls_through_to_suffix() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/label/__name__/values":
+            return httpx.Response(
+                200,
+                json={"status": "success", "data": ["weird_total"]},
+            )
+        if request.url.path == "/api/v1/metadata":
+            return httpx.Response(200, json={"status": "success", "data": {}})
+        if request.url.path == "/api/v1/series":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": [{"__name__": "weird_total", "metric_type": "mystery"}],
+                },
+            )
+        return httpx.Response(404, json={"status": "error", "error": "not found"})
+
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="http://test",
+    )
+    client = PrometheusClient("http://test", http_client=http_client)
+
+    assert client.list_metric_catalog() == [{"name": "weird_total", "type": "counter"}]
+
+
 def test_metric_label_options() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/v1/series"
@@ -180,6 +297,102 @@ def test_metric_label_options() -> None:
         "instance": ["a", "b"],
         "job": ["api", "worker"],
     }
+
+
+def test_metric_type_labels_returns_name_to_label_value() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/series"
+        assert request.url.params.get("match[]") == '{metric_type!=""}'
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": [
+                    {"__name__": "web_response_time", "metric_type": "timing", "host": "a"},
+                    {"__name__": "web_response_time", "metric_type": "timing", "host": "b"},
+                    {"__name__": "db_calls", "metric_type": "counter"},
+                ],
+            },
+        )
+
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="http://test",
+    )
+    client = PrometheusClient("http://test", http_client=http_client)
+
+    assert client.metric_type_labels() == {
+        "web_response_time": "timing",
+        "db_calls": "counter",
+    }
+
+
+def test_metric_type_labels_picks_smallest_on_conflict() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": [
+                    {"__name__": "ambiguous", "metric_type": "timing"},
+                    {"__name__": "ambiguous", "metric_type": "gauge"},
+                ],
+            },
+        )
+
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="http://test",
+    )
+    client = PrometheusClient("http://test", http_client=http_client)
+    assert client.metric_type_labels() == {"ambiguous": "gauge"}
+
+
+def test_metric_type_labels_ignores_series_without_name_or_label() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": [
+                    {"__name__": "good", "metric_type": "timing"},
+                    {"__name__": "missing_label", "host": "a"},
+                    {"metric_type": "counter"},
+                    "not-a-dict",
+                ],
+            },
+        )
+
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="http://test",
+    )
+    client = PrometheusClient("http://test", http_client=http_client)
+    assert client.metric_type_labels() == {"good": "timing"}
+
+
+def test_metric_type_labels_returns_empty_on_http_error() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"status": "error", "error": "boom"})
+
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="http://test",
+    )
+    client = PrometheusClient("http://test", http_client=http_client)
+    assert client.metric_type_labels() == {}
+
+
+def test_metric_type_labels_returns_empty_on_prometheus_error() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "error", "error": "bad selector"})
+
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="http://test",
+    )
+    client = PrometheusClient("http://test", http_client=http_client)
+    assert client.metric_type_labels() == {}
 
 
 def test_aggregate_series_points_merges_timestamps() -> None:
