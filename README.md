@@ -2,6 +2,20 @@
 
 StatView is a Flask + HTMX frontend for Prometheus metrics.
 
+## What?
+
+If you have a bunch of time-series statistics in Prometheus and want an easy way to browse and visualise them, without the hassle of pre-creating dashboards, this is the app for you.
+
+It supports:
+
+- Metric browsing.
+- Click-to-graph behavior.
+- Window/step selection.
+- Live updates (periodic refresh).
+- Comparison between two selected timeframes.
+- A six-panel standard timeframe view.
+- Dashboard creation
+
 ## Why?
 
 I wanted to browse through my metrics, see the latest info, see a comparison of other time periods, and easily send the URL of a specific metric to colleagues.
@@ -43,7 +57,7 @@ Available tags: `latest` (most recent push to `main`), `v<semver>` for tagged re
 
 ## Deploy on Railway
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/REPLACE_ME)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/tJw2Dm?referralCode=g99H_9&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 The button above deploys StatView from this repo using the included [`railway.toml`](railway.toml) (Dockerfile build, `/healthz` healthcheck, restart-on-failure). You will need to point it at your own Prometheus.
 
@@ -53,15 +67,6 @@ Prometheus stores time-series samples keyed by metric name and labels. This app 
 
 - `/api/v1/label/__name__/values` to list all metric names.
 - `/api/v1/query_range` to fetch graph data for chosen time windows.
-
-That directly supports:
-
-- Metric browsing.
-- Click-to-graph behavior.
-- Window/step selection.
-- Live updates (periodic refresh).
-- Comparison between two selected timeframes.
-- A six-panel standard timeframe view.
 
 ## Stack
 
@@ -76,88 +81,53 @@ That directly supports:
 
 ## Local development
 
-```bash
-uv sync --group dev
-uv run flask --app app.main:create_app run --host 0.0.0.0 --port 8000 --debug
-```
+Local dev runs in Docker — `./app`, `./alembic`, and `./data` are bind-mounted into the container, so editing files on the host triggers Flask's auto-reload inside the container without a rebuild.
 
-Set Prometheus URL:
+First time:
 
 ```bash
-export PROMETHEUS_URL=http://your-prometheus:9090
+cp .env.example .env  # set PROMETHEUS_URL
+tools/run-dev.sh      # docker compose up --build -d, picks up the dev override
 ```
 
-Optional live refresh interval:
+After the first build, plain `docker compose up` (no `--build`) is enough. Re-run `tools/run-dev.sh` whenever you change `pyproject.toml`/`uv.lock` or anything else baked into the image.
 
-```bash
-export LIVE_REFRESH_SECONDS=15
-```
-
-Run database migrations:
-
-```bash
-uv run alembic upgrade head
-```
-
-## Local tools
-
-Use the scripts in `tools/` for common local workflows:
-
-```bash
-# Open the app sqlite database in sqlite3 (auto-runs migrations if missing)
-tools/db.sh
-
-# Run tests
-tools/test.sh
-
-# Run ruff linting/format checks
-tools/check.sh
-
-# Build and start the local dev container
-tools/run-dev.sh
-```
-
-## Test and lint
-
-```bash
-tools/check.sh
-tools/test.sh
-```
-
-## Docker Compose (local build)
-
-Create your env file:
-
-```bash
-cp .env.example .env
-```
-
-Default local `docker compose` uses `docker-compose.yml` + `docker-compose.override.yml`:
-
-- Starts in dev mode (`flask --debug`)
-- Runs migrations on startup
-- Uses `/app/data` for persistent sqlite data inside the container
-- Bind mounts `./app`, `./alembic`, and `./data`
-
-Development:
-
-```bash
-docker compose up --build
-```
-
-After the first build, code is bind-mounted in dev so most changes do not need rebuilds:
-
-```bash
-docker compose up
-```
+Open <http://localhost:8000> once it's up. Tail logs with `docker compose logs -f statview`.
 
 > **Linux users:** the container runs as UID 1000 by default. If your host user has a different UID, set `STATVIEW_UID` and `STATVIEW_GID` in `.env` (typically `STATVIEW_UID=$(id -u)`, `STATVIEW_GID=$(id -g)`) so the bind-mounted `./data` directory is writable from inside the container.
 
-Production (local build, not using the published image):
+### Test, lint, and inspect
+
+Use the wrappers in `tools/`:
+
+```bash
+tools/check.sh   # ruff check + ruff format --check
+tools/test.sh    # pytest with the 85% coverage gate
+tools/db.sh      # open the sqlite store in sqlite3 (auto-migrates if missing)
+```
+
+These run via `uv` on the host — you'll need [uv](https://docs.astral.sh/uv/) installed (`brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`). They do not require the dev container to be running.
+
+### Build the production image locally
+
+If you want to test what the published image actually does (no bind-mounts, gunicorn instead of `flask --debug`):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 ```
+
+### Running directly on the host (not recommended)
+
+If you specifically want to skip Docker — for instance to attach a debugger that does not like containers — you can run the app the way the entrypoint does:
+
+```bash
+uv sync --group dev
+export PROMETHEUS_URL=http://your-prometheus:9090
+uv run alembic upgrade head
+uv run flask --app app.main:create_app run --host 0.0.0.0 --port 8000 --debug
+```
+
+Note that the deployment target is always Docker, so this path is purely for ergonomic exceptions.
 
 ## License
 
