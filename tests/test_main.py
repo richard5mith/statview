@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
+from unittest.mock import patch
 
+import httpx
 import pytest
 
 from app.config import Settings
 from app.main import create_app
+from app.prometheus import PrometheusClient, PrometheusUnreachableError
 from tests.test_support import TEST_DB_PATH
 
 pytestmark = pytest.mark.usefixtures("test_db")
@@ -625,3 +629,230 @@ def test_metric_data_api_requires_metric() -> None:
 
     assert response.status_code == 400
     assert response.get_json()["error"] == "metric is required"
+
+
+class UnreachablePrometheusClient:
+    """Fake client where every Prometheus call fails with unreachable."""
+
+    base_url = "http://example"
+
+    def _raise(self) -> None:
+        raise PrometheusUnreachableError(
+            "Cannot reach Prometheus at http://example: connection refused",
+            base_url=self.base_url,
+        )
+
+    def list_metric_catalog(self) -> list[dict[str, str]]:
+        self._raise()
+        return []  # unreachable, but typing
+
+    def list_alerts(self) -> list[dict[str, str]]:
+        self._raise()
+        return []
+
+    def metric_label_options(self, metric_name: str) -> dict[str, list[str]]:
+        self._raise()
+        return {}
+
+    def query_range(
+        self,
+        query: str,
+        window: str,
+        step: str,
+        end_offset: str = "0s",
+        series_name: str | None = None,
+    ) -> dict[str, Any]:
+        self._raise()
+        return {}
+
+
+def _unreachable_app():
+    return create_app(
+        settings=Settings(
+            prometheus_url="http://example",
+            live_refresh_seconds=5,
+            saved_db_path=str(TEST_DB_PATH),
+        ),
+        prometheus_client=UnreachablePrometheusClient(),
+        run_migrations=False,
+    )
+
+
+def test_index_renders_unreachable_page_on_connection_failure() -> None:
+    app = _unreachable_app()
+    response = app.test_client().get("/")
+
+    assert response.status_code == 503
+    body = response.data.decode("utf-8")
+    assert "Cannot reach Prometheus" in body
+    assert "http://example" in body
+    assert "connection refused" in body
+    # Top nav still rendered (template extends layout.html)
+    assert "StatView" in body
+
+
+def test_metrics_page_renders_unreachable_page_on_connection_failure() -> None:
+    app = _unreachable_app()
+    response = app.test_client().get("/metrics")
+    assert response.status_code == 503
+    assert b"Cannot reach Prometheus" in response.data
+
+
+def test_api_view_data_returns_json_503_on_connection_failure() -> None:
+    app = _unreachable_app()
+    response = app.test_client().get("/api/view-data?metrics=up")
+
+    assert response.status_code == 503
+    payload = response.get_json()
+    assert payload["error"] == "prometheus_unreachable"
+    assert payload["base_url"] == "http://example"
+    assert "connection refused" in payload["message"]
+
+
+def test_settings_reads_username_and_password_env_vars() -> None:
+    with patch.dict(
+        os.environ,
+        {"PROMETHEUS_USERNAME": "alice", "PROMETHEUS_PASSWORD": "s3cret"},
+        clear=False,
+    ):
+        s = Settings()
+    assert s.prometheus_username == "alice"
+    assert s.prometheus_password == "s3cret"
+
+
+def test_settings_username_none_when_unset() -> None:
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("PROMETHEUS_USERNAME", "PROMETHEUS_PASSWORD")
+    }
+    with patch.dict(os.environ, env, clear=True):
+        s = Settings()
+    assert s.prometheus_username is None
+    assert s.prometheus_password == ""
+
+
+def test_create_app_passes_auth_settings_to_client(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class _CapturingClient:
+        def __init__(self, base_url: str, **kwargs: Any) -> None:
+            captured["base_url"] = base_url
+            captured["kwargs"] = kwargs
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("app.main.PrometheusClient", _CapturingClient)
+
+    create_app(
+        settings=Settings(
+            prometheus_url="http://example",
+            prometheus_username="alice",
+            prometheus_password="s3cret",
+            live_refresh_seconds=5,
+            saved_db_path=str(TEST_DB_PATH),
+        ),
+        run_migrations=False,
+    )
+    assert captured["base_url"] == "http://example"
+    assert captured["kwargs"] == {"username": "alice", "password": "s3cret"}
+
+
+def test_create_app_loads_dotenv_when_dev_mode_and_no_settings(monkeypatch) -> None:
+    called: dict[str, Any] = {}
+
+    def fake_load_dotenv(*args: Any, **kwargs: Any) -> bool:
+        called["args"] = args
+        called["kwargs"] = kwargs
+        return True
+
+    monkeypatch.setattr("dotenv.load_dotenv", fake_load_dotenv)
+    monkeypatch.setenv("STATVIEW_MODE", "dev")
+
+    create_app(run_migrations=False)
+
+    assert called["kwargs"].get("override") is True
+
+
+def test_create_app_does_not_load_dotenv_outside_dev_mode(monkeypatch) -> None:
+    called = False
+
+    def fake_load_dotenv(*args: Any, **kwargs: Any) -> bool:
+        nonlocal called
+        called = True
+        return True
+
+    monkeypatch.setattr("dotenv.load_dotenv", fake_load_dotenv)
+    monkeypatch.delenv("STATVIEW_MODE", raising=False)
+
+    create_app(
+        settings=Settings(
+            prometheus_url="http://example",
+            live_refresh_seconds=5,
+            saved_db_path=str(TEST_DB_PATH),
+        ),
+        prometheus_client=FakePrometheusClient(),
+        run_migrations=False,
+    )
+
+    assert called is False
+
+
+def test_create_app_does_not_load_dotenv_when_settings_passed_explicitly(monkeypatch) -> None:
+    """Tests pass explicit Settings; load_dotenv should NOT run, even in dev mode."""
+    called = False
+
+    def fake_load_dotenv(*args: Any, **kwargs: Any) -> bool:
+        nonlocal called
+        called = True
+        return True
+
+    monkeypatch.setattr("dotenv.load_dotenv", fake_load_dotenv)
+    monkeypatch.setenv("STATVIEW_MODE", "dev")
+
+    create_app(
+        settings=Settings(
+            prometheus_url="http://example",
+            live_refresh_seconds=5,
+            saved_db_path=str(TEST_DB_PATH),
+        ),
+        prometheus_client=FakePrometheusClient(),
+        run_migrations=False,
+    )
+
+    assert called is False
+
+
+def test_error_page_does_not_leak_url_embedded_credentials() -> None:
+    # Build a real PrometheusClient (not the fake) so the URL is parsed by
+    # _split_credentials. Mock the transport so the connection fails.
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("nope")
+
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="http://host:9090",
+    )
+    client = PrometheusClient(
+        "http://leakuser:leakpass@host:9090",
+        http_client=http_client,
+    )
+
+    app = create_app(
+        settings=Settings(
+            prometheus_url="http://leakuser:leakpass@host:9090",
+            live_refresh_seconds=5,
+            saved_db_path=str(TEST_DB_PATH),
+        ),
+        prometheus_client=client,
+        run_migrations=False,
+    )
+    response = app.test_client().get("/")
+    body = response.data.decode("utf-8")
+
+    assert response.status_code == 503
+    assert "leakuser" not in body
+    assert "leakpass" not in body
+    # The sanitized URL must still appear.
+    assert "http://host:9090" in body

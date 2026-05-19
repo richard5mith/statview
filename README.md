@@ -55,11 +55,22 @@ docker compose -f docker-compose.ghcr.yml up -d
 
 Available tags: `latest` (most recent push to `main`), `v<semver>` for tagged releases, `sha-<short>` for any specific commit.
 
+## Configuration
+
+StatView is configured via environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `PROMETHEUS_URL` | `http://localhost:9090` | URL of the Prometheus server. |
+| `PROMETHEUS_USERNAME` | _(unset)_ | Optional HTTP basic-auth username for Prometheus. |
+| `PROMETHEUS_PASSWORD` | _(empty)_ | Optional HTTP basic-auth password. Only used when `PROMETHEUS_USERNAME` is set. |
+| `LIVE_REFRESH_SECONDS` | `15` | How often the UI polls for new data. |
+
 ## Deploy on Railway
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/tJw2Dm?referralCode=g99H_9&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
-The button above deploys StatView from this repo using the included [`railway.toml`](railway.toml) (Dockerfile build, `/healthz` healthcheck, restart-on-failure). You will need to point it at your own Prometheus.
+The button above deploys StatView from this repo using the Docker image built and stored here on GitHub. You will need to point it at your own Prometheus.
 
 ## How does Prometheus support this?
 

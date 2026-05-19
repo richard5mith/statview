@@ -1,0 +1,27 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<main class="page-shell">
+  <section class="error-page">
+    <h1>Cannot reach Prometheus</h1>
+    <p>StatView could not connect to the configured Prometheus server.</p>
+
+    <dl class="error-details">
+      <dt>Configured URL</dt>
+      <dd><code>{{ prometheus_url }}</code></dd>
+
+      <dt>Error</dt>
+      <dd><code>{{ error_message }}</code></dd>
+    </dl>
+
+    <p class="error-hint">
+      Check that <code>PROMETHEUS_URL</code> is correct and that the server is
+      running and reachable from the StatView container.
+    </p>
+
+    <p>
+      <a class="button" href="{{ request.url }}">Try again</a>
+    </p>
+  </section>
+</main>
+{% endblock %}

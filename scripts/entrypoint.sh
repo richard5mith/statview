@@ -40,7 +40,8 @@ case "$MODE" in
       run \
       --host "$HOST" \
       --port "$PORT" \
-      --debug
+      --debug \
+      --extra-files /app/.env
     ;;
   *)
     echo "Unsupported STATVIEW_MODE: $MODE" >&2

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import os
 
 from flask import Flask
 
@@ -18,6 +19,11 @@ def create_app(
     prometheus_client: PrometheusClient | None = None,
     run_migrations: bool = True,
 ) -> Flask:
+    if settings is None and os.getenv("STATVIEW_MODE") == "dev":
+        from dotenv import load_dotenv
+
+        load_dotenv(override=True)
+
     app = Flask(__name__)
     app.json.sort_keys = False
 
@@ -31,7 +37,11 @@ def create_app(
     if run_migrations:
         migrate_database(resolved_settings.saved_db_path)
 
-    client = prometheus_client or PrometheusClient(resolved_settings.prometheus_url)
+    client = prometheus_client or PrometheusClient(
+        resolved_settings.prometheus_url,
+        username=resolved_settings.prometheus_username,
+        password=resolved_settings.prometheus_password,
+    )
     saved_store = SavedViewStore(resolved_settings.saved_db_path)
 
     app.config["settings"] = resolved_settings

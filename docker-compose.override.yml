@@ -7,6 +7,7 @@ services:
     # Docker Desktop on macOS / Windows translates this automatically and the default is fine.
     user: "${STATVIEW_UID:-1000}:${STATVIEW_GID:-1000}"
     volumes:
+      - ./.env:/app/.env:ro
       - ./app:/app/app
       - ./alembic:/app/alembic
       - ./alembic.ini:/app/alembic.ini

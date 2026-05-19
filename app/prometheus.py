@@ -4,6 +4,7 @@ import math
 import re
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 import httpx
 
@@ -20,6 +21,20 @@ _DURATION_TO_SECONDS = {
 
 class PrometheusError(RuntimeError):
     pass
+
+
+class PrometheusUnreachableError(RuntimeError):
+    """Raised when the Prometheus server cannot be reached at all."""
+
+    def __init__(
+        self,
+        message: str,
+        base_url: str,
+        cause: Exception | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.base_url = base_url
+        self.cause = cause
 
 
 def normalize_metric_type(raw_type: str | None) -> str:
@@ -89,17 +104,86 @@ def aggregate_series_points(series: list[dict[str, Any]]) -> list[dict[str, floa
     return [{"t": ts, "v": buckets[ts]} for ts in sorted(buckets)]
 
 
+def _split_credentials(url: str) -> tuple[str, tuple[str, str] | None]:
+    """Split userinfo out of a URL.
+
+    Returns (url_without_userinfo, (username, password) | None).
+    """
+    parts = urlsplit(url)
+    if parts.username is None:
+        return url, None
+
+    username = unquote(parts.username)
+    password = unquote(parts.password) if parts.password is not None else ""
+
+    host = parts.hostname or ""
+    if parts.port is not None:
+        host = f"{host}:{parts.port}"
+
+    cleaned = urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))
+    return cleaned, (username, password)
+
+
+def _resolve_auth(
+    *,
+    username: str | None,
+    password: str,
+    embedded: tuple[str, str] | None,
+) -> tuple[str, str] | None:
+    """Resolve which basic-auth credentials to use.
+
+    Kwarg-supplied username/password take precedence over credentials
+    embedded in the URL. If neither is set, returns None.
+    """
+    if username:
+        return (username, password)
+    return embedded
+
+
 class PrometheusClient:
-    def __init__(self, base_url: str, http_client: httpx.Client | None = None) -> None:
-        self.base_url = base_url.rstrip("/")
-        self._http = http_client or httpx.Client(base_url=self.base_url, timeout=10.0)
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        username: str | None = None,
+        password: str = "",
+        http_client: httpx.Client | None = None,
+    ) -> None:
+        cleaned_url, embedded_auth = _split_credentials(base_url)
+        self.base_url = cleaned_url.rstrip("/")
+
+        if http_client is not None:
+            # Test-supplied client: caller is responsible for auth setup.
+            self._http = http_client
+            return
+
+        auth = _resolve_auth(
+            username=username,
+            password=password,
+            embedded=embedded_auth,
+        )
+        self._http = httpx.Client(
+            base_url=self.base_url,
+            timeout=10.0,
+            auth=auth,
+        )
 
     def close(self) -> None:
         self._http.close()
 
     def _fetch(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        response = self._http.get(path, params=params)
-        response.raise_for_status()
+        try:
+            response = self._http.get(path, params=params)
+        except httpx.TransportError as exc:
+            raise PrometheusUnreachableError(
+                f"Cannot reach Prometheus at {self.base_url}: {exc}",
+                base_url=self.base_url,
+                cause=exc,
+            ) from exc
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise PrometheusError(f"Prometheus returned HTTP {exc.response.status_code}") from exc
         payload = response.json()
         if payload.get("status") != "success":
             error = payload.get("error") or "unknown Prometheus error"
@@ -114,7 +198,7 @@ class PrometheusClient:
     def metric_types(self) -> dict[str, str]:
         try:
             data = self._fetch("/api/v1/metadata")
-        except (httpx.HTTPError, PrometheusError, ValueError):
+        except (httpx.HTTPError, PrometheusError, PrometheusUnreachableError, ValueError):
             return {}
 
         if not isinstance(data, dict):

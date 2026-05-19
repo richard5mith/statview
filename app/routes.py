@@ -14,7 +14,7 @@ from app.config import (
     STEP_UNITS,
     WINDOW_UNITS,
 )
-from app.prometheus import PrometheusError
+from app.prometheus import PrometheusError, PrometheusUnreachableError
 from app.services.view_backend import (
     _build_payload,
     _build_view_payload,
@@ -36,6 +36,31 @@ from app.services.view_backend import (
 
 
 def register_routes(app: Flask) -> None:
+    @app.errorhandler(PrometheusUnreachableError)
+    def _handle_prometheus_unreachable(
+        exc: PrometheusUnreachableError,
+    ) -> tuple[Any, int]:
+        if request.path.startswith("/api/"):
+            return (
+                jsonify(
+                    {
+                        "error": "prometheus_unreachable",
+                        "message": str(exc),
+                        "base_url": exc.base_url,
+                    }
+                ),
+                503,
+            )
+        return (
+            render_template(
+                "prometheus_unavailable.html",
+                prometheus_url=exc.base_url,
+                error_message=str(exc),
+                active_nav=None,
+            ),
+            503,
+        )
+
     @app.get("/")
     @app.get("/view")
     def index() -> str:

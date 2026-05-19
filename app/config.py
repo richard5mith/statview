@@ -10,6 +10,10 @@ class Settings:
     prometheus_url: str = field(
         default_factory=lambda: os.getenv("PROMETHEUS_URL", "http://localhost:9090")
     )
+    prometheus_username: str | None = field(
+        default_factory=lambda: os.getenv("PROMETHEUS_USERNAME") or None
+    )
+    prometheus_password: str = field(default_factory=lambda: os.getenv("PROMETHEUS_PASSWORD", ""))
     live_refresh_seconds: int = field(
         default_factory=lambda: int(os.getenv("LIVE_REFRESH_SECONDS", "15"))
     )
