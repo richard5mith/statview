@@ -477,7 +477,7 @@ def test_metric_panel_renders_with_payload() -> None:
     assert response.status_code == 200
     assert b"Main chart" in response.data
     assert b"Tag filters" in response.data
-    assert b"data-role=\"payload\"" in response.data
+    assert b'data-role="payload"' in response.data
 
 
 def test_metric_data_api_returns_json() -> None:
@@ -506,8 +506,7 @@ def test_metric_data_api_returns_json() -> None:
     assert len(body["presets"]) == 6
     assert body["presets"][0]["previous_offset"] == body["presets"][0]["window"]
     assert (
-        body["presets"][0]["previous_chart"]["end_offset"]
-        == body["presets"][0]["previous_offset"]
+        body["presets"][0]["previous_chart"]["end_offset"] == body["presets"][0]["previous_offset"]
     )
     assert len(body["summary_rows"]) == 2
 
@@ -550,8 +549,8 @@ def test_index_view_renders_tag_filters_for_selected_metric() -> None:
 
     assert response.status_code == 200
     assert b"Tag filters" in response.data
-    assert b"data-tag-filter-label=\"job\"" in response.data
-    assert b"data-tag-filter-metric=\"up\"" in response.data
+    assert b'data-tag-filter-label="job"' in response.data
+    assert b'data-tag-filter-metric="up"' in response.data
 
 
 def test_view_data_api_supports_per_metric_label_filters() -> None:

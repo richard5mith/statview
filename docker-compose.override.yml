@@ -2,6 +2,10 @@ services:
   statview:
     environment:
       STATVIEW_MODE: dev
+    # On Linux, set STATVIEW_UID / STATVIEW_GID in .env to match `id -u` / `id -g`
+    # so the container can write to the bind-mounted ./data directory.
+    # Docker Desktop on macOS / Windows translates this automatically and the default is fine.
+    user: "${STATVIEW_UID:-1000}:${STATVIEW_GID:-1000}"
     volumes:
       - ./app:/app/app
       - ./alembic:/app/alembic

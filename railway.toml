@@ -1,0 +1,15 @@
+# Railway config-as-code. Picked up automatically when deploying from this repo.
+# Volume mounts and required env vars are configured on the Railway template /
+# service side (see the "Deploy on Railway" section of the README), not here.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# /healthz returns 200 immediately and does not depend on Prometheus or the DB,
+# so it is safe to gate Railway's zero-downtime rollouts on it.
+healthcheckPath = "/healthz"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

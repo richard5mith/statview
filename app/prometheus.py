@@ -193,11 +193,7 @@ class PrometheusClient:
                 alert_name = str(labels.get("alertname", ""))
             summary = ""
             if isinstance(annotations, dict):
-                summary = str(
-                    annotations.get("summary")
-                    or annotations.get("description")
-                    or ""
-                )
+                summary = str(annotations.get("summary") or annotations.get("description") or "")
             alerts.append(
                 {
                     "name": alert_name or "unknown",

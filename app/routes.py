@@ -347,11 +347,7 @@ def register_routes(app: Flask) -> None:
         default_dashboard_step_unit = DEFAULT_STEP_UNIT
         default_dashboard_compare_enabled = False
         first_payload = next(
-            (
-                card.get("payload")
-                for card in cards
-                if isinstance(card.get("payload"), dict)
-            ),
+            (card.get("payload") for card in cards if isinstance(card.get("payload"), dict)),
             None,
         )
         if isinstance(first_payload, dict):
@@ -431,8 +427,7 @@ def register_routes(app: Flask) -> None:
             return jsonify({"error": "at least one valid metric is required"}), 400
 
         window_amount = _sanitize_positive_int(
-            str(payload_dict.get("window_amount", "")).strip()
-            or request.form.get("window_amount"),
+            str(payload_dict.get("window_amount", "")).strip() or request.form.get("window_amount"),
             DEFAULT_WINDOW_AMOUNT,
         )
         window_unit = _sanitize_choice(
@@ -466,10 +461,13 @@ def register_routes(app: Flask) -> None:
         )
         if save_as_new:
             saved_view_id = None
-        title_raw = str(payload_dict.get("title", "")).strip() or request.form.get(
-            "title",
-            "",
-        ).strip()
+        title_raw = (
+            str(payload_dict.get("title", "")).strip()
+            or request.form.get(
+                "title",
+                "",
+            ).strip()
+        )
 
         label_filters_raw = payload_dict.get("label_filters")
         metric_label_filters = (
@@ -793,4 +791,3 @@ def register_routes(app: Flask) -> None:
     @app.get("/healthz")
     def healthz() -> tuple[dict[str, str], int]:
         return {"status": "ok"}, 200
-

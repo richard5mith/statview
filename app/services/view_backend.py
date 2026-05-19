@@ -274,10 +274,7 @@ def _build_aggregate_query(
                 if label_name != "le"
             }
             bucket_query = _metric_selector(metric, filters_without_le)
-            return (
-                "histogram_quantile(0.95, "
-                f"sum by (le) (rate({bucket_query}[{rate_window}])))"
-            )
+            return f"histogram_quantile(0.95, sum by (le) (rate({bucket_query}[{rate_window}])))"
         if metric.endswith("_sum"):
             count_metric = f"{metric[:-4]}_count"
             count_query = _metric_selector(count_metric, selected_filters)
@@ -332,9 +329,7 @@ def _preset_comparison_rows(
 
 def _metric_types(catalog: list[dict[str, str]]) -> dict[str, str]:
     return {
-        item.get("name", ""): item.get("type", "unknown")
-        for item in catalog
-        if item.get("name")
+        item.get("name", ""): item.get("type", "unknown") for item in catalog if item.get("name")
     }
 
 
@@ -371,9 +366,7 @@ def _build_view_query_string(
         ("compare_enabled", "1" if compare_enabled else "0"),
     ]
     non_empty_filters = {
-        metric_name: filters
-        for metric_name, filters in metric_label_filters.items()
-        if filters
+        metric_name: filters for metric_name, filters in metric_label_filters.items() if filters
     }
     if non_empty_filters:
         params.append(
@@ -440,8 +433,7 @@ def _build_view_payload(
         "step": primary_payload["step"],
         "filters": primary_payload["filters"],
         "metric_filters": {
-            payload["metric"]: payload.get("filters", {})
-            for payload in metric_payloads
+            payload["metric"]: payload.get("filters", {}) for payload in metric_payloads
         },
         "compare": primary_payload["compare"],
         "payloads": metric_payloads,
@@ -590,4 +582,3 @@ def _build_payload(
         "presets": presets,
         "summary_rows": summary_rows,
     }
-

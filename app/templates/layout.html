@@ -4,9 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>StatView</title>
-    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <script src="{{ url_for('static', filename='vendor/htmx.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='vendor/chartjs-plugin-zoom.min.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
     <script>
       (() => {

@@ -8,7 +8,7 @@ GUNICORN_WORKERS="${GUNICORN_WORKERS:-2}"
 GUNICORN_THREADS="${GUNICORN_THREADS:-4}"
 
 if [ "${RUN_DB_MIGRATIONS:-1}" = "1" ]; then
-  uv run alembic upgrade head
+  python -c "from app.config import Settings; from app.db import migrate_database; migrate_database(Settings().saved_db_path)"
 fi
 
 if [ "$#" -gt 0 ]; then
@@ -17,7 +17,7 @@ fi
 
 case "$MODE" in
   prod|production)
-    exec uv run gunicorn \
+    exec gunicorn \
       -w "$GUNICORN_WORKERS" \
       -k gthread \
       --threads "$GUNICORN_THREADS" \
@@ -25,7 +25,7 @@ case "$MODE" in
       "app.main:create_app()"
     ;;
   dev|development)
-    exec uv run flask \
+    exec flask \
       --app app.main:create_app \
       run \
       --host "$HOST" \

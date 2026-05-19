@@ -1,0 +1,25 @@
+# Drop-in compose file for running the published image from GitHub Container Registry.
+# Usage:
+#   cp .env.example .env  # edit PROMETHEUS_URL
+#   docker compose -f docker-compose.ghcr.yml up -d
+#
+# To pin to a specific version, change `:latest` to e.g. `:v1.2.3` or `:sha-abcdef0`.
+
+services:
+  statview:
+    image: ghcr.io/richard5mith/statview:latest
+    pull_policy: always
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      STATVIEW_MODE: prod
+      STATVIEW_DATA_DIR: /app/data
+      RUN_DB_MIGRATIONS: "1"
+    restart: unless-stopped
+    volumes:
+      - statview-data:/app/data
+
+volumes:
+  statview-data:

@@ -58,9 +58,7 @@ class Dashboard(db.Model):
 
 class DashboardItem(db.Model):
     __tablename__ = "dashboard_items"
-    __table_args__ = (
-        db.UniqueConstraint("dashboard_id", "saved_view_id"),
-    )
+    __table_args__ = (db.UniqueConstraint("dashboard_id", "saved_view_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     dashboard_id: Mapped[int] = mapped_column(
@@ -77,4 +75,3 @@ class DashboardItem(db.Model):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
-
