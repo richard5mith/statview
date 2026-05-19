@@ -16,6 +16,10 @@ It supports:
 - A six-panel standard timeframe view.
 - Dashboard creation
 
+## What does it look like?
+
+![StatView screenshot](https://github.com/richard5mith/statview/blob/main/stat_view_example.png)
+
 ## Why?
 
 I wanted to browse through my metrics, see the latest info, see a comparison of other time periods, and easily send the URL of a specific metric to colleagues.
@@ -40,14 +44,14 @@ If `AUTH_TYPE` is unset or `none`, StatView has no built-in authentication. Anyo
 
 Set `AUTH_TYPE=github` and the variables below. StatView will gate every URL (except `/healthz`) behind a GitHub OAuth sign-in. Saved views and dashboards remain shared across all authorized users.
 
-| Variable | Required | Description |
-|---|---|---|
-| `AUTH_TYPE` | yes | Set to `github` |
-| `GITHUB_CLIENT_ID` | yes | From your GitHub OAuth app |
-| `GITHUB_CLIENT_SECRET` | yes | From your GitHub OAuth app |
-| `GITHUB_ALLOWED_USERS` | one of these two | Comma-separated GitHub logins, e.g. `alice,bob` |
-| `GITHUB_ALLOWED_ORG` | one of these two | GitHub org slug; members of the org are allowed in |
-| `OAUTH_REDIRECT_URL` | no | Override callback URL when behind a reverse proxy whose external host StatView can't autodetect. Default: `{scheme}://{host}/auth/callback`. |
+| Variable               | Required         | Description                                                                                                                                  |
+| ---------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTH_TYPE`            | yes              | Set to `github`                                                                                                                              |
+| `GITHUB_CLIENT_ID`     | yes              | From your GitHub OAuth app                                                                                                                   |
+| `GITHUB_CLIENT_SECRET` | yes              | From your GitHub OAuth app                                                                                                                   |
+| `GITHUB_ALLOWED_USERS` | one of these two | Comma-separated GitHub logins, e.g. `alice,bob`                                                                                              |
+| `GITHUB_ALLOWED_ORG`   | one of these two | GitHub org slug; members of the org are allowed in                                                                                           |
+| `OAUTH_REDIRECT_URL`   | no               | Override callback URL when behind a reverse proxy whose external host StatView can't autodetect. Default: `{scheme}://{host}/auth/callback`. |
 
 Create the OAuth app at GitHub → Settings → Developer settings → OAuth Apps → New OAuth App. Set the Authorization callback URL to `https://your-statview-host/auth/callback`.
 
@@ -89,12 +93,12 @@ Available tags: `latest` (most recent push to `main`), `v<semver>` for tagged re
 
 StatView is configured via environment variables:
 
-| Variable | Default | Description |
-|---|---|---|
-| `PROMETHEUS_URL` | `http://localhost:9090` | URL of the Prometheus server. |
-| `PROMETHEUS_USERNAME` | _(unset)_ | Optional HTTP basic-auth username for Prometheus. |
-| `PROMETHEUS_PASSWORD` | _(empty)_ | Optional HTTP basic-auth password. Only used when `PROMETHEUS_USERNAME` is set. |
-| `LIVE_REFRESH_SECONDS` | `15` | How often the UI polls for new data. |
+| Variable               | Default                 | Description                                                                     |
+| ---------------------- | ----------------------- | ------------------------------------------------------------------------------- |
+| `PROMETHEUS_URL`       | `http://localhost:9090` | URL of the Prometheus server.                                                   |
+| `PROMETHEUS_USERNAME`  | _(unset)_               | Optional HTTP basic-auth username for Prometheus.                               |
+| `PROMETHEUS_PASSWORD`  | _(empty)_               | Optional HTTP basic-auth password. Only used when `PROMETHEUS_USERNAME` is set. |
+| `LIVE_REFRESH_SECONDS` | `15`                    | How often the UI polls for new data.                                            |
 
 ## Deploy on Railway
 
