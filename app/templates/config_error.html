@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>StatView — configuration error</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 4rem auto; padding: 0 1rem; color: #222; }
+    h1 { color: #b00020; margin-bottom: 0.5rem; }
+    pre { background: #f4f4f4; padding: 1rem; border-radius: 4px; white-space: pre-wrap; word-break: break-word; }
+    p.small { color: #666; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>Configuration error</h1>
+  <p>StatView refused to start because of a configuration problem:</p>
+  <pre>{{ message }}</pre>
+  <p class="small">Fix the environment variables and restart the container. See the project README under <em>Security model</em>.</p>
+</body>
+</html>

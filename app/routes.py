@@ -34,6 +34,16 @@ from app.services.view_backend import (
     _selected_metrics,
 )
 
+TYPE_OVERRIDE_CHOICES = ["counter", "gauge", "timing", "histogram", "summary", "untyped"]
+AGG_OVERRIDE_CHOICES = ["sum", "avg", "max", "min"]
+
+
+def _sanitize_choice_or_none(value: str | None, allowed: list[str]) -> str | None:
+    if not value:
+        return None
+    candidate = value.strip().lower()
+    return candidate if candidate in allowed else None
+
 
 def register_routes(app: Flask) -> None:
     @app.errorhandler(PrometheusUnreachableError)
@@ -110,6 +120,12 @@ def register_routes(app: Flask) -> None:
             raw_metric_label_filters,
         )
 
+        type_override = _sanitize_choice_or_none(
+            request.args.get("type_override"), TYPE_OVERRIDE_CHOICES
+        )
+        agg_override = _sanitize_choice_or_none(
+            request.args.get("agg_override"), AGG_OVERRIDE_CHOICES
+        )
         view_payload: dict[str, Any] | None = None
         view_error: str | None = None
         if selected_metrics:
@@ -129,6 +145,8 @@ def register_routes(app: Flask) -> None:
                     step_unit=step_unit,
                     metric_label_filters=metric_label_filters,
                     compare_enabled=compare_enabled,
+                    type_override=type_override,
+                    agg_override=agg_override,
                 )
             except (PrometheusError, ValueError, OSError) as exc:
                 view_error = str(exc)
@@ -331,6 +349,12 @@ def register_routes(app: Flask) -> None:
                     selected_metrics,
                     dict(item["label_filters"]),
                 )
+                type_override = _sanitize_choice_or_none(
+                    request.args.get("type_override"), TYPE_OVERRIDE_CHOICES
+                )
+                agg_override = _sanitize_choice_or_none(
+                    request.args.get("agg_override"), AGG_OVERRIDE_CHOICES
+                )
                 payload = _build_view_payload(
                     app.config["prometheus_client"],
                     metrics=selected_metrics,
@@ -341,6 +365,8 @@ def register_routes(app: Flask) -> None:
                     step_unit=str(item["step_unit"]),
                     metric_label_filters=metric_label_filters,
                     compare_enabled=bool(item["compare_enabled"]),
+                    type_override=type_override,
+                    agg_override=agg_override,
                 )
                 error: str | None = None
             except (PrometheusError, ValueError, OSError) as exc:
@@ -691,6 +717,12 @@ def register_routes(app: Flask) -> None:
             _parse_metric_label_filters(request.args.get("label_filters")),
         )
 
+        type_override = _sanitize_choice_or_none(
+            request.args.get("type_override"), TYPE_OVERRIDE_CHOICES
+        )
+        agg_override = _sanitize_choice_or_none(
+            request.args.get("agg_override"), AGG_OVERRIDE_CHOICES
+        )
         try:
             metric_type_map = _metric_types(metric_catalog)
             payload = _build_view_payload(
@@ -703,6 +735,8 @@ def register_routes(app: Flask) -> None:
                 step_unit=step_unit,
                 metric_label_filters=metric_label_filters,
                 compare_enabled=compare_enabled,
+                type_override=type_override,
+                agg_override=agg_override,
             )
         except (PrometheusError, ValueError, OSError) as exc:
             return jsonify({"error": str(exc)}), 400
@@ -752,6 +786,7 @@ def register_routes(app: Flask) -> None:
                 step_unit=step_unit,
                 label_filters=label_filters,
                 compare_enabled=compare_enabled,
+                agg_override=None,
             )
             error: str | None = None
         except (PrometheusError, ValueError, OSError) as exc:
@@ -807,6 +842,7 @@ def register_routes(app: Flask) -> None:
                 step_unit=step_unit,
                 label_filters=label_filters,
                 compare_enabled=compare_enabled,
+                agg_override=None,
             )
         except (PrometheusError, ValueError, OSError) as exc:
             return jsonify({"error": str(exc)}), 400

@@ -239,7 +239,13 @@ def _counter_rate_window(step_duration: str) -> str:
         return "1m"
 
 
-def _metric_type_for_name(metric_name: str, metric_types: dict[str, str]) -> str:
+def _metric_type_for_name(
+    metric_name: str,
+    metric_types: dict[str, str],
+    type_override: str | None = None,
+) -> str:
+    if type_override:
+        return type_override
     metric_type = metric_types.get(metric_name, "unknown")
     if metric_type != "unknown":
         return metric_type
@@ -259,9 +265,15 @@ def _build_aggregate_query(
     metric_type: str,
     selected_filters: dict[str, str],
     step_duration: str,
+    agg_override: str | None = None,
 ) -> str:
     metric_query = _metric_selector(metric, selected_filters)
     rate_window = _counter_rate_window(step_duration)
+
+    if agg_override:
+        if metric_type == "counter":
+            return f"{agg_override}(rate({metric_query}[{rate_window}]))"
+        return f"{agg_override}({metric_query})"
 
     if metric_type == "counter":
         return f"sum(rate({metric_query}[{rate_window}]))"
@@ -296,6 +308,9 @@ def _build_aggregate_query(
             )
         if metric.endswith("_count"):
             return f"sum(rate({metric_query}[{rate_window}]))"
+        return f"avg({metric_query})"
+
+    if metric_type == "timing":
         return f"avg({metric_query})"
 
     if metric_type == "gauge":
@@ -406,18 +421,21 @@ def _build_view_payload(
     step_unit: str,
     metric_label_filters: dict[str, dict[str, str]],
     compare_enabled: bool,
+    type_override: str | None = None,
+    agg_override: str | None = None,
 ) -> dict[str, Any]:
     metric_payloads = [
         _build_payload(
             client,
             metric=metric_name,
-            metric_type=_metric_type_for_name(metric_name, metric_types),
+            metric_type=_metric_type_for_name(metric_name, metric_types, type_override),
             window_amount=window_amount,
             window_unit=window_unit,
             step_amount=step_amount,
             step_unit=step_unit,
             label_filters=metric_label_filters.get(metric_name, {}),
             compare_enabled=compare_enabled,
+            agg_override=agg_override,
         )
         for metric_name in metrics
     ]
@@ -444,6 +462,8 @@ def _build_view_payload(
         "metric_summaries": metric_summaries,
         "summary_rows": primary_payload["summary_rows"],
         "summary_metric": primary_payload["metric"],
+        "type_override": type_override or "",
+        "agg_override": agg_override or "",
     }
 
 
@@ -457,6 +477,7 @@ def _build_payload(
     step_unit: str,
     label_filters: dict[str, str],
     compare_enabled: bool,
+    agg_override: str | None = None,
 ) -> dict[str, Any]:
     window_duration = _WINDOW_UNIT_TO_DURATION[window_unit](window_amount)
     step_duration = _STEP_UNIT_TO_DURATION[step_unit](step_amount)
@@ -467,6 +488,7 @@ def _build_payload(
         metric_type=metric_type,
         selected_filters=selected_filters,
         step_duration=step_duration,
+        agg_override=agg_override,
     )
 
     primary = client.query_range(

@@ -824,6 +824,51 @@ def test_create_app_does_not_load_dotenv_when_settings_passed_explicitly(monkeyp
     assert called is False
 
 
+def test_view_data_honours_type_and_agg_overrides() -> None:
+    app = _test_app()
+    response = app.test_client().get(
+        "/api/view-data",
+        query_string={
+            "metrics": "up",
+            "window_amount": "1",
+            "window_unit": "hour",
+            "step_amount": "1",
+            "step_unit": "minute",
+            "type_override": "timing",
+            "agg_override": "max",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["type_override"] == "timing"
+    assert payload["agg_override"] == "max"
+    primary = payload["payloads"][0]
+    assert primary["metric_type"] == "timing"
+    aggregate_query = primary["primary"]["query"]
+    # The override should force max(...) regardless of detected type.
+    assert aggregate_query.startswith("max(")
+
+
+def test_view_data_rejects_unknown_overrides_silently() -> None:
+    app = _test_app()
+    response = app.test_client().get(
+        "/api/view-data",
+        query_string={
+            "metrics": "up",
+            "window_amount": "1",
+            "window_unit": "hour",
+            "step_amount": "1",
+            "step_unit": "minute",
+            "type_override": "weird",
+            "agg_override": "stddev",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["type_override"] == ""
+    assert payload["agg_override"] == ""
+
+
 def test_error_page_does_not_leak_url_embedded_credentials() -> None:
     # Build a real PrometheusClient (not the fake) so the URL is parsed by
     # _split_credentials. Mock the transport so the connection fails.

@@ -10,6 +10,8 @@
       <input type="hidden" name="window_unit" value="{{ default_window_unit }}" />
       <input type="hidden" name="step_amount" value="{{ default_step_amount }}" />
       <input type="hidden" name="step_unit" value="{{ default_step_unit }}" />
+      <input type="hidden" name="type_override" value="{{ view_payload.type_override }}" />
+      <input type="hidden" name="agg_override" value="{{ view_payload.agg_override }}" />
       <input type="hidden" name="compare_enabled" value="{{ '1' if default_compare_enabled else '0' }}" />
       <input type="hidden" name="label_filters" value="{{ default_label_filters }}" />
       <input
@@ -94,6 +96,30 @@
       </section>
 
       <div class="control-row">
+        <label>
+          Type
+          <select data-control="type_override">
+            <option value="" {% if not view_payload.type_override %}selected{% endif %}>Auto</option>
+            <option value="counter" {% if view_payload.type_override == "counter" %}selected{% endif %}>Counter</option>
+            <option value="gauge" {% if view_payload.type_override == "gauge" %}selected{% endif %}>Gauge</option>
+            <option value="timing" {% if view_payload.type_override == "timing" %}selected{% endif %}>Timing</option>
+            <option value="histogram" {% if view_payload.type_override == "histogram" %}selected{% endif %}>Histogram</option>
+            <option value="summary" {% if view_payload.type_override == "summary" %}selected{% endif %}>Summary</option>
+            <option value="untyped" {% if view_payload.type_override == "untyped" %}selected{% endif %}>Untyped</option>
+          </select>
+        </label>
+
+        <label>
+          Aggregation
+          <select data-control="agg_override">
+            <option value="" {% if not view_payload.agg_override %}selected{% endif %}>Auto</option>
+            <option value="sum" {% if view_payload.agg_override == "sum" %}selected{% endif %}>Sum</option>
+            <option value="avg" {% if view_payload.agg_override == "avg" %}selected{% endif %}>Avg</option>
+            <option value="max" {% if view_payload.agg_override == "max" %}selected{% endif %}>Max</option>
+            <option value="min" {% if view_payload.agg_override == "min" %}selected{% endif %}>Min</option>
+          </select>
+        </label>
+
         <label>
           Last
           <input type="number" min="1" value="{{ view_payload.window.amount }}" data-control="window_amount" />

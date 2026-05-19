@@ -26,7 +26,36 @@ I also loved StatHat, RIP.
 
 ## Security model
 
-**StatView has no built-in authentication or authorization.** Anyone who can reach the listening port can read every metric, create/rename/delete saved views, and modify dashboards. Deploy it only behind a trusted boundary — a reverse proxy with auth (oauth2-proxy, Cloudflare Access, Tailscale, basic-auth via nginx, etc.), a VPN, or a private network segment.
+StatView ships two operating modes. `SECRET_KEY` is **required in both modes** — it signs the Flask session cookie. Generate one with:
+
+```bash
+python -c 'import secrets; print(secrets.token_urlsafe(48))'
+```
+
+### No auth (default)
+
+If `AUTH_TYPE` is unset or `none`, StatView has no built-in authentication. Anyone who can reach the listening port can read every metric, create/rename/delete saved views, and modify dashboards. Deploy it only behind a trusted boundary — a reverse proxy with auth (oauth2-proxy, Cloudflare Access, Tailscale, basic-auth via nginx, etc.), a VPN, or a private network segment.
+
+### GitHub auth (opt-in)
+
+Set `AUTH_TYPE=github` and the variables below. StatView will gate every URL (except `/healthz`) behind a GitHub OAuth sign-in. Saved views and dashboards remain shared across all authorized users.
+
+| Variable | Required | Description |
+|---|---|---|
+| `AUTH_TYPE` | yes | Set to `github` |
+| `GITHUB_CLIENT_ID` | yes | From your GitHub OAuth app |
+| `GITHUB_CLIENT_SECRET` | yes | From your GitHub OAuth app |
+| `GITHUB_ALLOWED_USERS` | one of these two | Comma-separated GitHub logins, e.g. `alice,bob` |
+| `GITHUB_ALLOWED_ORG` | one of these two | GitHub org slug; members of the org are allowed in |
+| `OAUTH_REDIRECT_URL` | no | Override callback URL when behind a reverse proxy whose external host StatView can't autodetect. Default: `{scheme}://{host}/auth/callback`. |
+
+Create the OAuth app at GitHub → Settings → Developer settings → OAuth Apps → New OAuth App. Set the Authorization callback URL to `https://your-statview-host/auth/callback`.
+
+Notes:
+
+- Allowlist changes take effect on the next request — no restart needed. Org membership is cached for 60 minutes.
+- If `AUTH_TYPE=github` is set but any required variable is missing, every URL (including `/healthz`) returns 500 with an error message describing what's missing. The container stays up so you see the problem in the browser instead of `docker logs`.
+- **HTTPS behind a reverse proxy:** set `SESSION_COOKIE_SECURE=true` so the session cookie is only sent over HTTPS. Flask cannot detect the external scheme on its own when the proxy terminates TLS, so without this the cookie's `Secure` flag won't be set even though clients reach you over HTTPS.
 
 ## Run from the published image (recommended)
 
@@ -42,6 +71,7 @@ Quick start with `docker run`:
 docker run --rm \
   -p 8000:8000 \
   -e PROMETHEUS_URL=http://your-prometheus:9090 \
+  -e SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(48))') \
   -v statview-data:/app/data \
   ghcr.io/richard5mith/statview:latest
 ```

@@ -42,6 +42,7 @@ def test_series_label_ignores_name_label() -> None:
 def test_normalize_metric_type() -> None:
     assert normalize_metric_type("counter") == "counter"
     assert normalize_metric_type("GAUGE") == "gauge"
+    assert normalize_metric_type("timing") == "timing"
     assert normalize_metric_type("other") == "unknown"
     assert normalize_metric_type(None) == "unknown"
 
@@ -55,7 +56,7 @@ def test_fallback_metric_type() -> None:
 
 
 def test_metric_type_from_label_maps_known_values() -> None:
-    assert metric_type_from_label("timing") == "gauge"
+    assert metric_type_from_label("timing") == "timing"
     assert metric_type_from_label("gauge") == "gauge"
     assert metric_type_from_label("set") == "gauge"
     assert metric_type_from_label("histogram") == "gauge"
@@ -204,7 +205,7 @@ def test_list_metric_catalog_uses_metric_type_label_when_metadata_missing() -> N
     assert catalog == [
         {"name": "db_calls", "type": "counter"},
         {"name": "http_requests_total", "type": "counter"},
-        {"name": "web_response_time", "type": "gauge"},
+        {"name": "web_response_time", "type": "timing"},
     ]
 
 

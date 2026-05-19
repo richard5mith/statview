@@ -17,6 +17,13 @@ services:
       STATVIEW_MODE: prod
       STATVIEW_DATA_DIR: /app/data
       RUN_DB_MIGRATIONS: "1"
+      SECRET_KEY: ${SECRET_KEY}
+      AUTH_TYPE: ${AUTH_TYPE:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_ALLOWED_USERS: ${GITHUB_ALLOWED_USERS:-}
+      GITHUB_ALLOWED_ORG: ${GITHUB_ALLOWED_ORG:-}
+      OAUTH_REDIRECT_URL: ${OAUTH_REDIRECT_URL:-}
     restart: unless-stopped
     volumes:
       - statview-data:/app/data

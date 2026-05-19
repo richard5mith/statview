@@ -42,7 +42,7 @@ def normalize_metric_type(raw_type: str | None) -> str:
         return "unknown"
 
     lowered = raw_type.lower()
-    if lowered in {"counter", "gauge", "histogram", "summary", "untyped"}:
+    if lowered in {"counter", "gauge", "histogram", "summary", "timing", "untyped"}:
         return lowered
     return "unknown"
 
@@ -60,7 +60,7 @@ def fallback_metric_type(metric_name: str) -> str:
 
 
 _METRIC_TYPE_LABEL_MAP: dict[str, str] = {
-    "timing": "gauge",
+    "timing": "timing",
     "gauge": "gauge",
     "set": "gauge",
     "histogram": "gauge",

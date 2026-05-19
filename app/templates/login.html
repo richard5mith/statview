@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>StatView — sign in</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 420px; margin: 6rem auto; padding: 0 1rem; text-align: center; }
+    h1 { font-size: 1.5rem; }
+    .btn { display: inline-block; padding: 0.6rem 1.2rem; background: #24292f; color: #fff; border-radius: 6px; text-decoration: none; font-weight: 600; }
+    .notice { background: #fff8e1; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; color: #5a4500; }
+  </style>
+</head>
+<body>
+  <h1>StatView</h1>
+  {% if reason == "revoked" %}
+    <p class="notice">Your access was revoked. Sign in again if you should still have access.</p>
+  {% endif %}
+  <p>Sign in to continue.</p>
+  <p><a class="btn" href="{{ url_for('auth.start') }}">Sign in with GitHub</a></p>
+</body>
+</html>

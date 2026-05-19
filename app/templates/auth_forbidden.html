@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>StatView — access denied</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 560px; margin: 5rem auto; padding: 0 1rem; }
+    h1 { color: #b00020; }
+    pre { background: #f4f4f4; padding: 0.75rem; border-radius: 4px; white-space: pre-wrap; word-break: break-word; }
+    a { color: #0366d6; }
+  </style>
+</head>
+<body>
+  <h1>Access denied</h1>
+  <p>{{ headline }}</p>
+  {% if detail %}<pre>{{ detail }}</pre>{% endif %}
+  <p><a href="{{ url_for('auth.login_page') }}">Try a different account</a></p>
+</body>
+</html>

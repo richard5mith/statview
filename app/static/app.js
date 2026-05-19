@@ -193,12 +193,20 @@
     });
   }
 
-  function fmtTime(seconds, rangeSeconds) {
+  function fmtTime(seconds, rangeSeconds, stepSeconds) {
     const date = new Date(seconds * 1000);
     if (rangeSeconds >= 3600 * 24 * 180) {
       return date.toLocaleDateString(undefined, { month: "short", year: "2-digit" });
     }
     if (rangeSeconds >= 3600 * 24 * 3) {
+      if (typeof stepSeconds === "number" && stepSeconds > 0 && stepSeconds < 86400) {
+        return date.toLocaleString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
       return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
     }
     if (rangeSeconds >= 3600 * 6) {
@@ -287,6 +295,25 @@
     return `${bucketLabel(stepSeconds)} starting ${label}`;
   }
 
+  function formatTimingValue(milliseconds) {
+    if (typeof milliseconds !== "number" || Number.isNaN(milliseconds)) {
+      return "-";
+    }
+    const absolute = Math.abs(milliseconds);
+    if (absolute < 1) {
+      const value = milliseconds.toFixed(2).replace(/\.?0+$/, "");
+      return `${value}ms`;
+    }
+    if (absolute < 1000) {
+      const decimals = absolute < 10 ? 2 : 0;
+      return `${milliseconds.toFixed(decimals)}ms`;
+    }
+    if (absolute < 60000) {
+      return `${(milliseconds / 1000).toFixed(2)}s`;
+    }
+    return `${(milliseconds / 60000).toFixed(2)}min`;
+  }
+
   function humanize(value) {
     if (typeof value !== "number" || Number.isNaN(value)) {
       return "-";
@@ -341,6 +368,7 @@
     rangeStart,
     rangeEnd,
     zoomEnabled = false,
+    metricType = null,
   ) {
     const narrow = isNarrowViewport();
     const maxTicks =
@@ -352,11 +380,14 @@
             ? 10
             : 10;
 
+    const formatValue = (value) =>
+      metricType === "timing" ? formatTimingValue(Number(value)) : humanize(Number(value));
+
     const xScale = {
       type: "linear",
       ticks: {
         color: cssVar("--chart-text", "#d9e0f6"),
-        callback: (value) => fmtTime(Number(value), rangeSeconds),
+        callback: (value) => fmtTime(Number(value), rangeSeconds, stepSeconds),
         maxTicksLimit: narrow ? Math.max(4, Math.floor(maxTicks * 0.7)) : maxTicks,
         maxRotation: 0,
       },
@@ -416,7 +447,7 @@
               return fmtTooltipTime(Number(first.parsed.x), stepSeconds);
             },
             label: (context) =>
-              `${context.dataset.label}: ${humanize(Number(context.parsed.y))}`,
+              `${context.dataset.label}: ${formatValue(context.parsed.y)}`,
             footer: () => (stepLabel ? `Bucket: ${stepLabel}` : ""),
           },
         },
@@ -452,7 +483,7 @@
         y: {
           ticks: {
             color: cssVar("--chart-text", "#d9e0f6"),
-            callback: (value) => humanize(Number(value)),
+            callback: (value) => formatValue(value),
           },
           grid: { color: cssVar("--chart-grid", "rgba(191, 204, 255, 0.12)") },
         },
@@ -470,6 +501,7 @@
     rangeStart,
     rangeEnd,
     zoomEnabled = false,
+    metricType = null,
   ) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) {
@@ -484,6 +516,7 @@
       rangeStart,
       rangeEnd,
       zoomEnabled,
+      metricType,
     );
     const existing = chartMap[canvasId];
     if (existing && existing.canvas === canvas) {
@@ -703,6 +736,7 @@
       Number(primaryPayload.primary.start),
       Number(primaryPayload.primary.end),
       true,
+      primaryPayload.metric_type,
     );
 
     const basePresets = payload.presets || [];
@@ -755,6 +789,8 @@
         basePreset.step,
         Number(basePreset.chart.start),
         Number(basePreset.chart.end),
+        false,
+        primaryPayload.metric_type,
       );
     });
 
@@ -806,6 +842,8 @@
       window_unit: panel.querySelector("[data-control='window_unit']")?.value,
       step_amount: panel.querySelector("[data-control='step_amount']")?.value,
       step_unit: panel.querySelector("[data-control='step_unit']")?.value,
+      type_override: panel.querySelector("[data-control='type_override']")?.value || "",
+      agg_override: panel.querySelector("[data-control='agg_override']")?.value || "",
       compare_enabled: compareEnabled ? "1" : "0",
       label_filters: JSON.stringify(labelFilters),
     };
@@ -829,6 +867,8 @@
       "step_amount",
       "step_unit",
       "compare_enabled",
+      "type_override",
+      "agg_override",
       "label_filters",
     ];
     keys.forEach((key) => {
@@ -854,6 +894,8 @@
     params.set("step_amount", current.step_amount || "1");
     params.set("step_unit", current.step_unit || "hour");
     params.set("compare_enabled", current.compare_enabled || "0");
+    params.set("type_override", current.type_override || "");
+    params.set("agg_override", current.agg_override || "");
     if (current.label_filters && current.label_filters !== "{}") {
       params.set("label_filters", current.label_filters);
     } else {
@@ -1389,6 +1431,7 @@
       Number(primaryPayload.primary.start),
       Number(primaryPayload.primary.end),
       false,
+      primaryPayload.metric_type,
     );
     renderDashboardLatest(tile, payload);
     applyDashboardTileDisplayMode(tile);
