@@ -97,6 +97,34 @@ def test_callback_route_is_exempt(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("test_db")
+def test_favicon_is_exempt_from_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Browsers auto-request /favicon.ico; gating it pollutes the next-URL."""
+    fake = FakeGitHubClient()
+    app = _auth_app(monkeypatch, fake)
+    response = app.test_client().get("/favicon.ico")
+    # Either 200 (if a favicon is served) or 404 (none present) — but NOT 302
+    # to /login. The gate must not intercept.
+    assert response.status_code != 302
+
+
+@pytest.mark.usefixtures("test_db")
+def test_subsequent_gated_requests_do_not_overwrite_next(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the browser loads "/" it also fires parallel subresource requests.
+    All of them get gated; the first one's path should win in session["next"]."""
+    fake = FakeGitHubClient()
+    app = _auth_app(monkeypatch, fake)
+    client = app.test_client()
+
+    client.get("/dashboards")
+    client.get("/saved")  # later request should NOT overwrite
+
+    with client.session_transaction() as sess:
+        assert sess.get("next") == "/dashboards"
+
+
+@pytest.mark.usefixtures("test_db")
 def test_authenticated_user_in_allowlist_passes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

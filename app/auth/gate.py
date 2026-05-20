@@ -23,6 +23,7 @@ EXEMPT_PATHS = frozenset(
         "/auth/start",
         "/auth/callback",
         "/logout",
+        "/favicon.ico",
     }
 )
 log = logging.getLogger(__name__)
@@ -44,7 +45,14 @@ def register_auth_gate(app: Flask) -> None:
         login = session.get("github_login")
         token = session.get("github_token")
         if not login or not token:
-            session["next"] = request.full_path.rstrip("?") if request.query_string else path
+            # setdefault, not assignment: a browser loading "/" also fires
+            # parallel subresource requests (favicon, etc.) which all get gated.
+            # Whichever lands last would otherwise overwrite the user's intended
+            # destination, so the first gated path wins.
+            session.setdefault(
+                "next",
+                request.full_path.rstrip("?") if request.query_string else path,
+            )
             return redirect(url_for("auth.login_page"), code=302)
 
         cfg: AuthConfig = current_app.config["auth_config"]
