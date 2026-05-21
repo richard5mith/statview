@@ -161,19 +161,6 @@ If you want to test what the published image actually does (no bind-mounts, guni
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 ```
 
-### Running directly on the host (not recommended)
-
-If you specifically want to skip Docker — for instance to attach a debugger that does not like containers — you can run the app the way the entrypoint does:
-
-```bash
-uv sync --group dev
-export PROMETHEUS_URL=http://your-prometheus:9090
-uv run alembic upgrade head
-uv run flask --app app.main:create_app run --host 0.0.0.0 --port 8000 --debug
-```
-
-Note that the deployment target is always Docker, so this path is purely for ergonomic exceptions.
-
 ## License
 
 [MIT](LICENSE).

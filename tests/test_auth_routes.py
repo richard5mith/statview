@@ -208,3 +208,22 @@ def test_logout_does_not_accept_get(monkeypatch: pytest.MonkeyPatch) -> None:
     app = _auth_app(monkeypatch, fake)
     response = app.test_client().get("/logout")
     assert response.status_code == 405
+
+
+@pytest.mark.usefixtures("test_db")
+def test_callback_unexpected_exception_renders_branded_error_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the policy raises something other than GitHubUnreachableError,
+    the user sees auth_forbidden.html with the exception detail — not a
+    generic 500, and not silent "deny".
+    """
+    fake = FakeGitHubClient()
+    fake.org_raises = RuntimeError("authlib decode failure: bad token payload")
+    app = _auth_app(monkeypatch, fake, allowed_users="", allowed_org="acme")
+    client = app.test_client()
+    response = client.get("/auth/callback")
+    assert response.status_code == 500
+    body = response.data
+    assert b"Sign-in error" in body
+    assert b"authlib decode failure" in body

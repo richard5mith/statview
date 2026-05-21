@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any
 
 from flask import Flask, jsonify, redirect, render_template, request, url_for
+from sqlalchemy.exc import IntegrityError
 
 from app.config import (
     DEFAULT_STEP_AMOUNT,
@@ -14,7 +14,24 @@ from app.config import (
     STEP_UNITS,
     WINDOW_UNITS,
 )
+from app.dashboards import (
+    add_saved_view_to_dashboard,
+    create_dashboard,
+    get_dashboard,
+    list_dashboard_items,
+    list_dashboards,
+    reorder_dashboard_items,
+)
+from app.extensions import db
+from app.label_filters import LabelFilters
 from app.prometheus import PrometheusError, PrometheusUnreachableError
+from app.saved_views import (
+    get_saved_view,
+    list_saved_views,
+    remove_saved_view,
+    rename_saved_view,
+    save_saved_view,
+)
 from app.services.view_backend import (
     _build_payload,
     _build_view_payload,
@@ -22,10 +39,6 @@ from app.services.view_backend import (
     _metric_type_for_name,
     _metric_types,
     _parse_bool,
-    _parse_label_filters,
-    _parse_metric_label_filters,
-    _parse_metric_label_filters_object,
-    _resolve_metric_label_filters,
     _sanitize_choice,
     _sanitize_metric_label_filters,
     _sanitize_optional_positive_int,
@@ -97,7 +110,7 @@ def register_routes(app: Flask) -> None:
             DEFAULT_STEP_UNIT,
         )
         compare_enabled = _parse_bool(request.args.get("compare_enabled"), False)
-        raw_metric_label_filters = _parse_metric_label_filters(request.args.get("label_filters"))
+        filters = LabelFilters.parse(request.args.get("label_filters"))
 
         metrics: list[dict[str, str]] = []
         metrics_error: str | None = None
@@ -115,10 +128,7 @@ def register_routes(app: Flask) -> None:
                 selected_metrics.append(add_metric)
         if remove_metric:
             selected_metrics = [name for name in selected_metrics if name != remove_metric]
-        metric_label_filters = _resolve_metric_label_filters(
-            selected_metrics,
-            raw_metric_label_filters,
-        )
+        metric_label_filters = filters.resolve(selected_metrics)
 
         type_override = _sanitize_choice_or_none(
             request.args.get("type_override"), TYPE_OVERRIDE_CHOICES
@@ -133,7 +143,7 @@ def register_routes(app: Flask) -> None:
                 metric_label_filters = _sanitize_metric_label_filters(
                     app.config["prometheus_client"],
                     selected_metrics,
-                    metric_label_filters,
+                    filters,
                 )
                 view_payload = _build_view_payload(
                     app.config["prometheus_client"],
@@ -169,7 +179,7 @@ def register_routes(app: Flask) -> None:
                 "step_unit": step_unit,
                 "compare_enabled": "1" if compare_enabled else "0",
                 "label_filters": (
-                    json.dumps(metric_label_filters, sort_keys=True, separators=(",", ":"))
+                    LabelFilters(per_metric=metric_label_filters).to_json()
                     if metric_label_filters
                     else ""
                 ),
@@ -238,7 +248,7 @@ def register_routes(app: Flask) -> None:
     @app.get("/saved")
     def saved_page() -> str:
         search = request.args.get("q", "").strip()
-        saved_views = app.config["saved_store"].list(search)
+        saved_views = list_saved_views(search)
 
         return render_template(
             "saved.html",
@@ -247,20 +257,32 @@ def register_routes(app: Flask) -> None:
             active_nav="saved",
         )
 
+    def _dashboard_summaries() -> list[dict[str, Any]]:
+        return [
+            {
+                "id": dashboard.id,
+                "name": dashboard.name,
+                "item_count": item_count,
+                "created_at": dashboard.created_at,
+                "updated_at": dashboard.updated_at,
+            }
+            for dashboard, item_count in list_dashboards()
+        ]
+
     @app.get("/dashboards")
     def dashboards_page() -> str:
-        dashboards = app.config["saved_store"].list_dashboards()
+        dashboards = _dashboard_summaries()
         return render_template(
             "dashboards.html",
             dashboards=dashboards,
             active_nav="dashboards",
         )
 
-    @app.post("/dashboards")
-    def create_dashboard() -> Any:
+    @app.post("/dashboards", endpoint="create_dashboard")
+    def create_dashboard_view() -> Any:
         dashboard_name = request.form.get("name", "").strip()
         if not dashboard_name:
-            dashboards = app.config["saved_store"].list_dashboards()
+            dashboards = _dashboard_summaries()
             return (
                 render_template(
                     "dashboards.html",
@@ -272,9 +294,9 @@ def register_routes(app: Flask) -> None:
             )
 
         try:
-            dashboard = app.config["saved_store"].create_dashboard(dashboard_name)
+            dashboard = create_dashboard(dashboard_name)
         except ValueError:
-            dashboards = app.config["saved_store"].list_dashboards()
+            dashboards = _dashboard_summaries()
             return (
                 render_template(
                     "dashboards.html",
@@ -284,8 +306,9 @@ def register_routes(app: Flask) -> None:
                 ),
                 400,
             )
-        except sqlite3.IntegrityError:
-            dashboards = app.config["saved_store"].list_dashboards()
+        except IntegrityError:
+            db.session.rollback()
+            dashboards = _dashboard_summaries()
             return (
                 render_template(
                     "dashboards.html",
@@ -296,7 +319,7 @@ def register_routes(app: Flask) -> None:
                 409,
             )
 
-        return redirect(url_for("dashboard_detail_page", dashboard_id=dashboard["id"]), code=303)
+        return redirect(url_for("dashboard_detail_page", dashboard_id=dashboard.id), code=303)
 
     @app.post("/dashboards/add-item")
     def add_saved_to_dashboard() -> Any:
@@ -305,15 +328,21 @@ def register_routes(app: Flask) -> None:
         next_url = request.form.get("next", "").strip() or url_for("saved_page")
         if dashboard_id is None or saved_id is None:
             return redirect(next_url, code=303)
-        app.config["saved_store"].add_saved_view_to_dashboard(dashboard_id, saved_id)
+        add_saved_view_to_dashboard(dashboard_id, saved_id)
         return redirect(next_url, code=303)
 
     @app.get("/dashboards/<int:dashboard_id>")
     def dashboard_detail_page(dashboard_id: int) -> Any:
-        dashboard = app.config["saved_store"].get_dashboard(dashboard_id)
+        dashboard = get_dashboard(dashboard_id)
         if dashboard is None:
             return redirect(url_for("dashboards_page"), code=303)
-        saved_views = app.config["saved_store"].list()
+        items = list_dashboard_items(dashboard_id)
+        dashboard_summary = {
+            "id": dashboard.id,
+            "name": dashboard.name,
+            "item_count": len(items),
+        }
+        saved_views = list_saved_views()
 
         metrics: list[dict[str, str]] = []
         try:
@@ -324,18 +353,16 @@ def register_routes(app: Flask) -> None:
         metric_names = set(metric_type_map)
 
         cards: list[dict[str, Any]] = []
-        for item in app.config["saved_store"].list_dashboard_items(dashboard_id):
-            selected_metrics = _selected_metrics(",".join(item["metrics"]), metric_names)
+        for item in items:
+            view = item.saved_view
+            selected_metrics = _selected_metrics(view.metrics_csv, metric_names)
             if not selected_metrics:
                 cards.append(
                     {
-                        "dashboard_item_id": item["dashboard_item_id"],
-                        "saved_view_id": item["saved_view_id"],
-                        "title": item["title"],
-                        "view_url": (
-                            f"{url_for('index')}"
-                            f"?saved_id={item['saved_view_id']}&{item['query_string']}"
-                        ),
+                        "dashboard_item_id": item.id,
+                        "saved_view_id": view.id,
+                        "title": view.title,
+                        "view_url": (f"{url_for('index')}?saved_id={view.id}&{view.query_string}"),
                         "metrics_csv": "",
                         "label_filters_json": "{}",
                         "payload": None,
@@ -344,11 +371,9 @@ def register_routes(app: Flask) -> None:
                 )
                 continue
 
+            item_filters = view.label_filters
             try:
-                metric_label_filters = _resolve_metric_label_filters(
-                    selected_metrics,
-                    dict(item["label_filters"]),
-                )
+                metric_label_filters = item_filters.resolve(selected_metrics)
                 type_override = _sanitize_choice_or_none(
                     request.args.get("type_override"), TYPE_OVERRIDE_CHOICES
                 )
@@ -359,12 +384,12 @@ def register_routes(app: Flask) -> None:
                     app.config["prometheus_client"],
                     metrics=selected_metrics,
                     metric_types=metric_type_map,
-                    window_amount=int(item["window_amount"]),
-                    window_unit=str(item["window_unit"]),
-                    step_amount=int(item["step_amount"]),
-                    step_unit=str(item["step_unit"]),
+                    window_amount=int(view.window_amount),
+                    window_unit=str(view.window_unit),
+                    step_amount=int(view.step_amount),
+                    step_unit=str(view.step_unit),
                     metric_label_filters=metric_label_filters,
-                    compare_enabled=bool(item["compare_enabled"]),
+                    compare_enabled=bool(view.compare_enabled),
                     type_override=type_override,
                     agg_override=agg_override,
                 )
@@ -375,18 +400,12 @@ def register_routes(app: Flask) -> None:
 
             cards.append(
                 {
-                    "dashboard_item_id": item["dashboard_item_id"],
-                    "saved_view_id": item["saved_view_id"],
-                    "title": item["title"],
-                    "view_url": (
-                        f"{url_for('index')}?saved_id={item['saved_view_id']}&{item['query_string']}"
-                    ),
+                    "dashboard_item_id": item.id,
+                    "saved_view_id": view.id,
+                    "title": view.title,
+                    "view_url": (f"{url_for('index')}?saved_id={view.id}&{view.query_string}"),
                     "metrics_csv": ",".join(selected_metrics),
-                    "label_filters_json": json.dumps(
-                        dict(item["label_filters"]),
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ),
+                    "label_filters_json": item_filters.to_json(),
                     "payload": payload,
                     "error": error,
                 }
@@ -436,7 +455,7 @@ def register_routes(app: Flask) -> None:
 
         return render_template(
             "dashboard_detail.html",
-            dashboard=dashboard,
+            dashboard=dashboard_summary,
             cards=cards,
             saved_views=saved_views,
             current_url=request.path,
@@ -521,23 +540,15 @@ def register_routes(app: Flask) -> None:
         )
 
         label_filters_raw = payload_dict.get("label_filters")
-        metric_label_filters = (
-            _parse_metric_label_filters_object(label_filters_raw)
-            if isinstance(label_filters_raw, dict)
-            else _parse_metric_label_filters(str(label_filters_raw) if label_filters_raw else None)
-        )
-        if not metric_label_filters:
-            metric_label_filters = _parse_metric_label_filters(request.form.get("label_filters"))
-        metric_label_filters = _resolve_metric_label_filters(
-            selected_metrics,
-            metric_label_filters,
-        )
+        filters = LabelFilters.parse(label_filters_raw)
+        if filters.is_empty():
+            filters = LabelFilters.parse(request.form.get("label_filters"))
 
         try:
             metric_label_filters = _sanitize_metric_label_filters(
                 app.config["prometheus_client"],
                 selected_metrics,
-                metric_label_filters,
+                filters,
             )
         except (PrometheusError, OSError):
             metric_label_filters = {metric_name: {} for metric_name in selected_metrics}
@@ -554,9 +565,9 @@ def register_routes(app: Flask) -> None:
         if title_raw:
             title = title_raw
         elif saved_view_id is not None:
-            existing_saved = app.config["saved_store"].get(saved_view_id)
+            existing_saved = get_saved_view(saved_view_id)
             if existing_saved:
-                title = str(existing_saved.get("title", "")).strip() or _saved_view_title(
+                title = (existing_saved.title or "").strip() or _saved_view_title(
                     metrics=selected_metrics,
                     window_amount=window_amount,
                     window_unit=window_unit,
@@ -583,7 +594,7 @@ def register_routes(app: Flask) -> None:
                 compare_enabled=compare_enabled,
             )
 
-        saved_entry, created = app.config["saved_store"].save(
+        saved_entry, created = save_saved_view(
             saved_view_id=saved_view_id,
             title=title,
             metrics_csv=",".join(selected_metrics),
@@ -592,7 +603,11 @@ def register_routes(app: Flask) -> None:
             step_amount=step_amount,
             step_unit=step_unit,
             compare_enabled=compare_enabled,
-            label_filters=metric_label_filters,
+            # metric_label_filters is post-sanitization: shared filters have already been merged
+            # into each metric via filters.resolve(...) and invalid entries dropped against the
+            # live Prometheus catalog. Persist the per-metric form so saved views only contain
+            # filters Prometheus actually knows about.
+            label_filters=LabelFilters(per_metric=metric_label_filters),
             query_string=query_string,
             force_create=save_as_new,
         )
@@ -600,14 +615,13 @@ def register_routes(app: Flask) -> None:
         return (
             jsonify(
                 {
-                    "id": saved_entry["id"],
-                    "title": saved_entry["title"],
+                    "id": saved_entry.id,
+                    "title": saved_entry.title,
                     "created": created,
                     "url": (
-                        f"{url_for('index')}"
-                        f"?saved_id={saved_entry['id']}&{saved_entry['query_string']}"
+                        f"{url_for('index')}?saved_id={saved_entry.id}&{saved_entry.query_string}"
                     ),
-                    "updated_at": saved_entry["updated_at"],
+                    "updated_at": saved_entry.updated_at,
                 }
             ),
             201 if created else 200,
@@ -615,7 +629,7 @@ def register_routes(app: Flask) -> None:
 
     @app.delete("/api/saved/<int:saved_id>")
     def delete_saved_view_api(saved_id: int) -> tuple[dict[str, Any], int] | Any:
-        deleted = app.config["saved_store"].remove(saved_id)
+        deleted = remove_saved_view(saved_id)
         if not deleted:
             return jsonify({"error": "saved view not found"}), 404
         return jsonify({"deleted": True, "id": saved_id})
@@ -631,10 +645,10 @@ def register_routes(app: Flask) -> None:
         if not title:
             return jsonify({"error": "title is required"}), 400
 
-        entry = app.config["saved_store"].rename(saved_id, title)
+        entry = rename_saved_view(saved_id, title)
         if entry is None:
             return jsonify({"error": "saved view not found"}), 404
-        return jsonify({"id": entry["id"], "title": entry["title"]})
+        return jsonify({"id": entry.id, "title": entry.title})
 
     @app.post("/api/dashboards/<int:dashboard_id>/reorder")
     def reorder_dashboard_items_api(dashboard_id: int) -> tuple[dict[str, Any], int] | Any:
@@ -655,7 +669,7 @@ def register_routes(app: Flask) -> None:
         if not item_ids:
             return jsonify({"error": "item_ids is required"}), 400
 
-        ok = app.config["saved_store"].reorder_dashboard_items(dashboard_id, item_ids)
+        ok = reorder_dashboard_items(dashboard_id, item_ids)
         if not ok:
             return jsonify({"error": "invalid dashboard item order"}), 400
         return jsonify({"ok": True, "dashboard_id": dashboard_id, "item_ids": item_ids})
@@ -712,10 +726,8 @@ def register_routes(app: Flask) -> None:
             DEFAULT_STEP_UNIT,
         )
         compare_enabled = _parse_bool(request.args.get("compare_enabled"), False)
-        metric_label_filters = _resolve_metric_label_filters(
-            selected_metrics,
-            _parse_metric_label_filters(request.args.get("label_filters")),
-        )
+        filters = LabelFilters.parse(request.args.get("label_filters"))
+        metric_label_filters = filters.resolve(selected_metrics)
 
         type_override = _sanitize_choice_or_none(
             request.args.get("type_override"), TYPE_OVERRIDE_CHOICES
@@ -772,7 +784,7 @@ def register_routes(app: Flask) -> None:
             DEFAULT_STEP_UNIT,
         )
         compare_enabled = _parse_bool(request.args.get("compare_enabled"), False)
-        label_filters = _parse_label_filters(request.args.get("label_filters"))
+        label_filters = LabelFilters.parse(request.args.get("label_filters")).for_metric(metric)
 
         try:
             metric_type = _metric_type_for_name(metric, {})
@@ -828,7 +840,7 @@ def register_routes(app: Flask) -> None:
             DEFAULT_STEP_UNIT,
         )
         compare_enabled = _parse_bool(request.args.get("compare_enabled"), False)
-        label_filters = _parse_label_filters(request.args.get("label_filters"))
+        label_filters = LabelFilters.parse(request.args.get("label_filters")).for_metric(metric)
 
         try:
             metric_type = _metric_type_for_name(metric, {})

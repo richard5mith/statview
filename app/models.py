@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from sqlalchemy import Integer, Text, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.extensions import db
+from app.label_filters import LabelFilters
 
 
 class SavedView(db.Model):
@@ -38,6 +39,14 @@ class SavedView(db.Model):
         server_default=text("CURRENT_TIMESTAMP"),
     )
 
+    @property
+    def metrics(self) -> list[str]:
+        return [chunk.strip() for chunk in self.metrics_csv.split(",") if chunk.strip()]
+
+    @property
+    def label_filters(self) -> LabelFilters:
+        return LabelFilters.parse(self.label_filters_json)
+
 
 class Dashboard(db.Model):
     __tablename__ = "dashboards"
@@ -53,6 +62,11 @@ class Dashboard(db.Model):
         Text,
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
+    )
+    items: Mapped[list[DashboardItem]] = relationship(
+        back_populates="dashboard",
+        cascade="all, delete-orphan",
+        order_by="DashboardItem.position, DashboardItem.id",
     )
 
 
@@ -75,3 +89,5 @@ class DashboardItem(db.Model):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
+    dashboard: Mapped[Dashboard] = relationship(back_populates="items")
+    saved_view: Mapped[SavedView] = relationship()
