@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from flask import (
     Blueprint,
@@ -15,7 +14,8 @@ from flask import (
 )
 
 from app.auth.config import AuthConfig
-from app.auth.github import GitHubAuthError, GitHubClient
+from app.auth.github import GitHubAuthError, GitHubClient, GitHubUnreachableError
+from app.auth.policy import is_allowed
 
 MAX_ERROR_DETAIL = 200
 log = logging.getLogger(__name__)
@@ -52,7 +52,24 @@ def _build_blueprint() -> Blueprint:
                 detail=detail,
             ), 403
 
-        if not _is_allowed(login, token, cfg, client):
+        try:
+            allowed = is_allowed(login, token, cfg, client)
+        except GitHubUnreachableError as exc:
+            log.warning(
+                "Org membership check unavailable during callback for login=%s: %s",
+                login,
+                exc,
+            )
+            allowed = False
+        except Exception as exc:
+            log.exception("Unexpected error during allowlist check for login=%s", login)
+            return render_template(
+                "auth_forbidden.html",
+                headline="Sign-in error.",
+                detail=str(exc)[:MAX_ERROR_DETAIL],
+            ), 500
+
+        if not allowed:
             log.warning("OAuth allowlist denial for login=%s", login)
             return render_template(
                 "auth_forbidden.html",
@@ -73,23 +90,6 @@ def _build_blueprint() -> Blueprint:
         return redirect(url_for("auth.login_page"), code=302)
 
     return bp
-
-
-def _is_allowed(
-    login: str,
-    token: dict[str, Any],
-    cfg: AuthConfig,
-    client: GitHubClient,
-) -> bool:
-    if login.lower() in cfg.allowed_users:
-        return True
-    if cfg.allowed_org is None:
-        return False
-    try:
-        return client.is_org_member(login, cfg.allowed_org, token)
-    except Exception as exc:
-        log.warning("Org membership check failed during callback: %s", exc)
-        return False
 
 
 def register_auth_routes(app: Flask) -> None:

@@ -220,7 +220,10 @@ def test_save_view_api_can_force_create_new_entry() -> None:
     assert second_body["id"] != first_body["id"]
     assert "saved_id=" in second_body["url"]
 
-    saved_entries = app.config["saved_store"].list()
+    from app.saved_views import list_saved_views
+
+    with app.app_context():
+        saved_entries = list_saved_views()
     assert len(saved_entries) == 2
 
 
@@ -415,8 +418,11 @@ def test_dashboard_reorder_api_updates_positions() -> None:
         data={"dashboard_id": str(dashboard_id), "saved_id": str(second_saved)},
     )
 
-    items = app.config["saved_store"].list_dashboard_items(dashboard_id)
-    original_ids = [item["dashboard_item_id"] for item in items]
+    from app.dashboards import list_dashboard_items
+
+    with app.app_context():
+        items = list_dashboard_items(dashboard_id)
+        original_ids = [item.id for item in items]
     reversed_ids = list(reversed(original_ids))
 
     reordered = client.post(
@@ -425,8 +431,10 @@ def test_dashboard_reorder_api_updates_positions() -> None:
     )
     assert reordered.status_code == 200
 
-    updated = app.config["saved_store"].list_dashboard_items(dashboard_id)
-    assert [item["dashboard_item_id"] for item in updated] == reversed_ids
+    with app.app_context():
+        updated = list_dashboard_items(dashboard_id)
+        updated_ids = [item.id for item in updated]
+    assert updated_ids == reversed_ids
 
 
 def test_dashboard_reorder_api_validation_and_not_found_dashboard() -> None:

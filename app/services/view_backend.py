@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 from app.config import (
     STANDARD_PRESETS,
 )
+from app.label_filters import LabelFilters
 from app.prometheus import PrometheusClient, parse_prometheus_duration
 
 _WINDOW_UNIT_TO_DURATION = {
@@ -59,93 +60,16 @@ def _parse_bool(value: str | None, default: bool) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
-def _parse_label_filters(raw: str | None) -> dict[str, str]:
-    if not raw:
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(parsed, dict):
-        return {}
-
-    cleaned: dict[str, str] = {}
-    for label_name, label_value in parsed.items():
-        if not isinstance(label_name, str) or not label_name:
-            continue
-        if not isinstance(label_value, str) or not label_value:
-            continue
-        cleaned[label_name] = label_value
-    return cleaned
-
-
-def _parse_metric_label_filters_object(raw: object) -> dict[str, dict[str, str]]:
-    if not isinstance(raw, dict):
-        return {}
-
-    nested: dict[str, dict[str, str]] = {}
-    shared: dict[str, str] = {}
-    for metric_or_label, value in raw.items():
-        if not isinstance(metric_or_label, str) or not metric_or_label:
-            continue
-        if isinstance(value, str):
-            if value:
-                shared[metric_or_label] = value
-            continue
-        if not isinstance(value, dict):
-            continue
-        cleaned = {
-            str(label_name): str(label_value)
-            for label_name, label_value in value.items()
-            if isinstance(label_name, str)
-            and label_name
-            and isinstance(label_value, str)
-            and label_value
-        }
-        if cleaned:
-            nested[metric_or_label] = cleaned
-
-    if shared:
-        if nested:
-            nested["*"] = shared
-            return nested
-        return {"*": shared}
-    return nested
-
-
-def _parse_metric_label_filters(raw: str | None) -> dict[str, dict[str, str]]:
-    if not raw:
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    return _parse_metric_label_filters_object(parsed)
-
-
-def _resolve_metric_label_filters(
-    selected_metrics: list[str],
-    parsed_metric_filters: dict[str, dict[str, str]],
-) -> dict[str, dict[str, str]]:
-    shared = parsed_metric_filters.get("*", {})
-    resolved: dict[str, dict[str, str]] = {}
-    for metric in selected_metrics:
-        metric_filters = dict(shared)
-        metric_filters.update(parsed_metric_filters.get(metric, {}))
-        resolved[metric] = metric_filters
-    return resolved
-
-
 def _sanitize_metric_label_filters(
     client: PrometheusClient,
     selected_metrics: list[str],
-    metric_label_filters: dict[str, dict[str, str]],
+    filters: LabelFilters,
 ) -> dict[str, dict[str, str]]:
     sanitized: dict[str, dict[str, str]] = {}
     for metric in selected_metrics:
         available_filters = client.metric_label_options(metric)
         sanitized[metric] = _sanitize_label_filters(
-            metric_label_filters.get(metric, {}),
+            filters.for_metric(metric),
             available_filters,
         )
     return sanitized

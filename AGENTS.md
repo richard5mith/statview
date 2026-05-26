@@ -20,3 +20,6 @@ There's an sqlite database for storing settings.
 * Tests that can run with their own test database file.
 * Github workflows to create a Docker image and upload to Github package source.
 * The app will always be run inside Docker, never on a host. Docker only deployment model.
+* Vendor dependencies
+* Use red/green TDD
+* Tests should test behavior, not implementation

@@ -14,6 +14,7 @@ from flask import (
 
 from app.auth.config import AuthConfig
 from app.auth.github import GitHubClient, GitHubUnreachableError
+from app.auth.policy import is_allowed
 
 EXEMPT_PREFIXES = ("/static/",)
 EXEMPT_PATHS = frozenset(
@@ -58,28 +59,20 @@ def register_auth_gate(app: Flask) -> None:
         cfg: AuthConfig = current_app.config["auth_config"]
         client: GitHubClient = current_app.config["github_client"]
 
-        if login.lower() in cfg.allowed_users:
-            return None
-
-        if cfg.allowed_org is None:
-            log.warning("Mid-session denial: login=%s no longer in allowlist", login)
-            return _revoke()
-
         try:
-            if client.is_org_member(login, cfg.allowed_org, token):
-                return None
-            log.warning(
-                "Mid-session denial: login=%s no longer in org=%s",
-                login,
-                cfg.allowed_org,
-            )
-            return _revoke()
+            allowed = is_allowed(login, token, cfg, client)
         except GitHubUnreachableError as exc:
             log.warning("Org membership check unavailable for login=%s: %s", login, exc)
             return render_template(
                 "auth_unavailable.html",
                 detail=str(exc)[:200],
             ), 503
+
+        if allowed:
+            return None
+
+        log.warning("Mid-session denial: login=%s no longer authorised", login)
+        return _revoke()
 
 
 def _revoke():

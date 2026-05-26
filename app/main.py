@@ -15,7 +15,6 @@ from app.db import migrate_database
 from app.extensions import db, migrate
 from app.prometheus import PrometheusClient
 from app.routes import register_routes
-from app.saved_views import SavedViewStore
 
 
 def create_app(
@@ -55,11 +54,9 @@ def create_app(
         username=resolved_settings.prometheus_username,
         password=resolved_settings.prometheus_password,
     )
-    saved_store = SavedViewStore(resolved_settings.saved_db_path)
 
     app.config["settings"] = resolved_settings
     app.config["prometheus_client"] = client
-    app.config["saved_store"] = saved_store
     app.config["auth_config"] = auth_config
 
     if prometheus_client is None:
